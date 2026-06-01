@@ -1047,20 +1047,20 @@ const S = {
     boxSizing: "border-box",
   },
   notificationPanel: {
-    position: "absolute",
-    right: -10, // Pulls it slightly away from the edge
-    top: 40,
+    position: "fixed", // Breaks out of the button container and anchors to the screen
+    right: 16, // Always keeps a perfect 16px gap from the right edge of the phone
+    top: 70, // Places it cleanly just below your header
     width: "320px",
-    maxWidth: "85vw", // Forces it to shrink on smaller screens so it never bleeds off
+    maxWidth: "calc(100vw - 32px)", // Forces it to shrink on tiny screens so it NEVER cuts off the left
     background: "#111F35",
     borderRadius: 14,
     border: `1px solid ${C.borderMid}`,
     overflow: "hidden",
     zIndex: 1000,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    boxShadow: "0 12px 40px rgba(0,0,0,0.8)",
     display: "flex",
     flexDirection: "column",
-    maxHeight: 400,
+    maxHeight: "60vh", // Prevents it from getting cut off at the bottom on shorter phones
   },
   notifHeader: {
     padding: "12px 16px",
