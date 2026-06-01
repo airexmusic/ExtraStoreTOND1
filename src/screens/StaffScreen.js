@@ -10,11 +10,10 @@ import {
   query,
   orderBy,
   limit,
-  getDocs,
 } from "firebase/firestore";
 
 // ─── CATALOG ──────────────────────────────────────────────────────────────────
-const EXTRA_ITEMS = [
+const FALLBACK_ITEMS = [
   "Child Bed",
   "Extension Board",
   "Extra Bed",
@@ -81,8 +80,11 @@ export default function StaffDashboard({
   const [expanded, setExpanded] = useState(null);
   const [modalItem, setModalItem] = useState(null);
   const [allEntries, setAllEntries] = useState([]);
-  const [parValues, setParValues] = useState(DEFAULT_PAR);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
+
+  // Dynamic Items and Par State
+  const [displayItems, setDisplayItems] = useState(FALLBACK_ITEMS);
+  const [parValues, setParValues] = useState(DEFAULT_PAR);
 
   // Meta Edit Modal Fields
   const [showMetaEdit, setShowMetaEdit] = useState(false);
@@ -107,27 +109,31 @@ export default function StaffDashboard({
     return () => unsub();
   }, []);
 
+  // LIVE FETCH Par Values & Dynamic Items List
   useEffect(() => {
-    (async () => {
-      try {
-        const q = query(
-          collection(db, "par_deployments"),
-          orderBy("deployedAt", "desc"),
-          limit(1)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const latest = snap.docs[0].data();
-          if (latest?.items) {
-            const map = {};
-            latest.items.forEach((i) => {
-              map[i.name] = i.par;
-            });
-            setParValues((p) => ({ ...p, ...map }));
+    const q = query(
+      collection(db, "par_deployments"),
+      orderBy("deployedAt", "desc"),
+      limit(1)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        const latest = snap.docs[0].data();
+        if (latest?.items) {
+          const map = {};
+          const names = [];
+          latest.items.forEach((i) => {
+            map[i.name] = i.par;
+            names.push(i.name);
+          });
+          setParValues((p) => ({ ...p, ...map }));
+          if (names.length > 0) {
+            setDisplayItems(names);
           }
         }
-      } catch (_) {}
-    })();
+      }
+    });
+    return () => unsub();
   }, []);
 
   function filtered(itemName, filterArea) {
@@ -213,7 +219,7 @@ export default function StaffDashboard({
           createdAt: Date.now(),
         });
 
-        // 2. Trigger the notification for the Admin dashboard
+        // 2. Generate permanent ADD receipt
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} placed ${
             e.qty
@@ -233,6 +239,22 @@ export default function StaffDashboard({
 
   async function removeEntry(id) {
     try {
+      // 1. Find the item details BEFORE deleting it
+      const entryToDel = allEntries.find((e) => e.id === id);
+
+      // 2. Generate permanent REMOVE receipt in the log
+      if (entryToDel) {
+        await addDoc(collection(db, "notifications"), {
+          message: `${user?.name || "Unknown"} removed ${entryToDel.qty} ${
+            entryToDel.itemName
+          } from ${entryToDel.area} (${entryToDel.locLabel})`,
+          createdBy: user?.name || "Unknown",
+          createdAt: Date.now(),
+          readBy: [],
+        });
+      }
+
+      // 3. Delete the live inventory item
       await deleteDoc(doc(db, "extra_item_entries", id));
     } catch (err) {
       alert("Remove failed: " + err.message);
@@ -272,7 +294,7 @@ export default function StaffDashboard({
               userSelect: "none",
             }}
             onDoubleClick={openMetaEdit}
-            title="Click to edit shift details"
+            title="Double-click to edit shift details"
           >
             {user?.allocation || "Staff"} • {user?.shift || "Day"} Shift ✎
           </div>
@@ -356,7 +378,7 @@ export default function StaffDashboard({
 
       {/* ── ITEM CARDS ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {EXTRA_ITEMS.map((itemName) => {
+        {displayItems.map((itemName) => {
           const actual = total(itemName, area);
           const par = parValues[itemName] || 0;
           const variance = actual - par;
@@ -370,7 +392,6 @@ export default function StaffDashboard({
               style={S.card}
               onClick={() => handleTap(itemName)}
             >
-              {/* card top row */}
               <div style={S.cardRow}>
                 <div style={S.cardLeft}>
                   <div style={S.cardName}>{itemName}</div>
@@ -404,7 +425,6 @@ export default function StaffDashboard({
                 </div>
               </div>
 
-              {/* expand panel */}
               {isOpen && (
                 <div style={S.expandPanel}>
                   <div style={S.divider} />
@@ -433,7 +453,6 @@ export default function StaffDashboard({
       {modalItem && (
         <div style={S.overlay} onClick={closeModal}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-            {/* modal header */}
             <div style={S.modalHeader}>
               <div>
                 <div style={S.modalEyebrow}>{area}</div>
@@ -446,7 +465,6 @@ export default function StaffDashboard({
 
             <div style={S.modalDivider} />
 
-            {/* location type */}
             {isFloor(area) && (
               <div style={S.fieldBlock}>
                 <div style={S.fieldLabel}>Location</div>
@@ -520,7 +538,6 @@ export default function StaffDashboard({
               </div>
             </div>
 
-            {/* staged */}
             {staged.length > 0 && (
               <div style={S.entriesBlock}>
                 <div style={S.entriesLabel}>New entries</div>
@@ -542,7 +559,6 @@ export default function StaffDashboard({
               </div>
             )}
 
-            {/* existing */}
             {existingForModal.length > 0 && (
               <div style={S.entriesBlock}>
                 <div style={S.entriesLabel}>Saved entries</div>
@@ -564,7 +580,6 @@ export default function StaffDashboard({
 
             <div style={S.modalDivider} />
 
-            {/* actions */}
             <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
               <button onClick={closeModal} style={S.cancelBtn}>
                 Cancel
@@ -586,7 +601,6 @@ export default function StaffDashboard({
         </div>
       )}
 
-      {/* ── SHIFT / ALLOCATION EDIT MODAL ── */}
       {showMetaEdit && (
         <div style={S.overlay} onClick={() => setShowMetaEdit(false)}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
@@ -643,7 +657,6 @@ export default function StaffDashboard({
   );
 }
 
-// ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const C = {
   bg: "#07101E",
   surface: "#0F1B2D",
@@ -702,6 +715,7 @@ const S = {
     cursor: "pointer",
     padding: "4px 0",
     letterSpacing: "0.02em",
+    fontFamily: "inherit",
   },
   dropdown: {
     position: "absolute",

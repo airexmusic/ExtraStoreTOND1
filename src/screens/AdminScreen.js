@@ -5,15 +5,17 @@ import {
   query,
   orderBy,
   limit,
-  getDocs,
   onSnapshot,
   doc,
   updateDoc,
   arrayUnion,
+  deleteDoc,
+  where,
+  getDocs,
 } from "firebase/firestore";
 
 // ─── CATALOG & CONSTANTS ──────────────────────────────────────────────────────
-const EXTRA_ITEMS = [
+const FALLBACK_ITEMS = [
   "Child Bed",
   "Extension Board",
   "Extra Bed",
@@ -61,6 +63,15 @@ function formatDate(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
+function formatFullDateTime(ts) {
+  if (!ts) return "--";
+  const d = new Date(ts);
+  return `${d.toLocaleDateString()} at ${d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function AdminScreen({
   user,
@@ -71,6 +82,9 @@ export default function AdminScreen({
   const [activeTab, setActiveTab] = useState("ITEMS");
   const [area, setArea] = useState("All Areas");
   const [allEntries, setAllEntries] = useState([]);
+
+  // Dynamic Items and Par State
+  const [displayItems, setDisplayItems] = useState(FALLBACK_ITEMS);
   const [parValues, setParValues] = useState(DEFAULT_PAR);
 
   const [showRoleMenu, setShowRoleMenu] = useState(false);
@@ -88,36 +102,52 @@ export default function AdminScreen({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  const isCreator = user?.allocation === "Creator";
+  // Check creator via role OR allocation to be fully safe
+  const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
   const initialLoadDone = useRef(false);
+
+  // The timestamp for exactly 12:00 AM today
+  const todayStart = new Date().setHours(0, 0, 0, 0);
 
   // 1. Fetch live updates for toasts and actual item entries
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "extra_item_entries"), (snap) => {
       snap.docChanges().forEach((change) => {
-        if (change.type === "added" && initialLoadDone.current) {
+        if (initialLoadDone.current) {
           const data = change.doc.data();
           const notifId = Date.now() + Math.random();
-          const msg = `${data.itemName} updated in ${data.locLabel} (Qty: ${data.qty}) by ${data.createdBy}`;
-          setToasts((prev) => [...prev, { id: notifId, msg }]);
-          setTimeout(
-            () => setToasts((prev) => prev.filter((t) => t.id !== notifId)),
-            5000
-          );
+          let msg = "";
+
+          if (change.type === "added") {
+            msg = `${data.itemName} placed in ${data.locLabel} (Qty: ${data.qty}) by ${data.createdBy}`;
+          } else if (change.type === "removed") {
+            msg = `${data.itemName} removed from ${data.locLabel} (Qty: ${data.qty}) by ${data.createdBy}`;
+          }
+
+          if (msg) {
+            setToasts((prev) => [...prev, { id: notifId, msg }]);
+            setTimeout(
+              () => setToasts((prev) => prev.filter((t) => t.id !== notifId)),
+              5000
+            );
+          }
         }
       });
       initialLoadDone.current = true;
-      setAllEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      const fetchedDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      fetchedDocs.sort((a, b) => b.createdAt - a.createdAt);
+      setAllEntries(fetchedDocs);
     });
     return () => unsub();
   }, []);
 
-  // 2. Fetch notifications for the bell icon
+  // 2. Fetch notifications for the bell icon AND the User Log
   useEffect(() => {
     const q = query(
       collection(db, "notifications"),
       orderBy("createdAt", "desc"),
-      limit(50)
+      limit(200) // Deep history
     );
     const unsub = onSnapshot(q, (snap) => {
       setNotifications(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
@@ -125,41 +155,47 @@ export default function AdminScreen({
     return () => unsub();
   }, []);
 
-  // 3. Fetch par values
+  // 3. LIVE FETCH Par Values & Dynamic Items List
   useEffect(() => {
-    (async () => {
-      try {
-        const q = query(
-          collection(db, "par_deployments"),
-          orderBy("deployedAt", "desc"),
-          limit(1)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const latest = snap.docs[0].data();
-          if (latest?.items) {
-            const map = {};
-            latest.items.forEach((i) => {
-              map[i.name] = i.par;
-            });
-            setParValues((p) => ({ ...p, ...map }));
+    const q = query(
+      collection(db, "par_deployments"),
+      orderBy("deployedAt", "desc"),
+      limit(1)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        const latest = snap.docs[0].data();
+        if (latest?.items) {
+          const map = {};
+          const names = [];
+          latest.items.forEach((i) => {
+            map[i.name] = i.par;
+            names.push(i.name);
+          });
+          setParValues((p) => ({ ...p, ...map }));
+          if (names.length > 0) {
+            setDisplayItems(names);
           }
         }
-      } catch (_) {}
-    })();
+      }
+    });
+    return () => unsub();
   }, []);
 
-  // Compute unread count
-  const unreadCount = notifications.filter(
+  // ── FILTER FOR TODAY ONLY ──
+  // This reads the permanent log, but filters out anything before midnight today.
+  const todaysNotifications = notifications.filter(
+    (n) => n.createdAt >= todayStart
+  );
+
+  const unreadCount = todaysNotifications.filter(
     (n) => !n.readBy?.includes(user?.name)
   ).length;
 
-  // Toggle bell & mark as read
   const handleToggleNotifications = () => {
     setShowNotifications((prev) => !prev);
-    // If we are opening the panel and there are unread notifications
     if (!showNotifications && unreadCount > 0) {
-      notifications.forEach(async (n) => {
+      todaysNotifications.forEach(async (n) => {
         if (!n.readBy?.includes(user?.name)) {
           try {
             const ref = doc(db, "notifications", n.id);
@@ -171,6 +207,21 @@ export default function AdminScreen({
           }
         }
       });
+    }
+  };
+
+  // Delete Individual Log Entry Function (Creator Only)
+  const deleteLogEntry = async (id) => {
+    if (!isCreator) return;
+    const confirmDelete = window.confirm(
+      "Permanently delete this activity log?"
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "notifications", id));
+    } catch (err) {
+      alert("Failed to delete log: " + err.message);
     }
   };
 
@@ -199,6 +250,7 @@ export default function AdminScreen({
     return map;
   }
 
+  // ── EXPORT INVENTORY AUDIT REPORT ──
   const exportCSV = () => {
     if (!startDate || !endDate) {
       alert("Please select both a start and end date.");
@@ -211,17 +263,11 @@ export default function AdminScreen({
       (e) => e.createdAt >= start && e.createdAt <= end
     );
 
-    // \uFEFF is a Byte Order Mark (BOM) that forces Excel to read the CSV properly
     let csvContent = "\uFEFF";
-
-    // Headers matching your Excel screenshot
     csvContent += "Items,Total Par,Variance,Locations,Updated By,Date\n";
 
-    EXTRA_ITEMS.forEach((itemName) => {
+    displayItems.forEach((itemName) => {
       const itemEntries = rangeEntries.filter((e) => e.itemName === itemName);
-
-      // If you only want to download items that actually have entries, uncomment the next line:
-      // if (itemEntries.length === 0) return;
 
       const actualQty = itemEntries.reduce(
         (sum, e) => sum + (parseInt(e.qty) || 0),
@@ -230,19 +276,15 @@ export default function AdminScreen({
       const par = parValues[itemName] || 0;
       const variance = actualQty - par;
 
-      // Cleanly format locations (e.g., "Floor 1 Pantry A")
       const locs = itemEntries.map((e) => {
-        // Only append area if it's not already completely obvious
         return `${e.area} ${e.locLabel}`.trim();
       });
 
-      // Join with \n to force in-cell line breaks in Excel
       const uniqueLocs = [...new Set(locs)].join("\n");
       const updatedByList = [
         ...new Set(itemEntries.map((e) => e.createdBy)),
       ].join("\n");
 
-      // Format dates perfectly to DD-MM-YYYY
       const datesList = [
         ...new Set(
           itemEntries.map((e) => {
@@ -255,7 +297,6 @@ export default function AdminScreen({
         ),
       ].join("\n");
 
-      // Wrap variables in double quotes "" so Excel respects the \n as an inside-the-cell break
       csvContent += `"${itemName}","${par}","${variance}","${uniqueLocs}","${updatedByList}","${datesList}"\n`;
     });
 
@@ -269,14 +310,73 @@ export default function AdminScreen({
     document.body.removeChild(link);
   };
 
-  const todayStart = new Date().setHours(0, 0, 0, 0);
+  // ── EXPORT HISTORICAL USER ACTIVITY LOG (Creator Only) ──
+  const exportActivityReport = async () => {
+    if (!isCreator) return;
+    if (!startDate || !endDate) {
+      alert("Please select both a start and end date.");
+      return;
+    }
+
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).setHours(23, 59, 59, 999);
+
+    try {
+      // Direct query to Firebase so it can pull thousands of records if needed without crashing
+      const q = query(
+        collection(db, "notifications"),
+        where("createdAt", ">=", start),
+        where("createdAt", "<=", end),
+        orderBy("createdAt", "desc")
+      );
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        alert("No user activity logs found for this specific date range.");
+        return;
+      }
+
+      let csvContent = "\uFEFF"; // BOM for Excel
+      csvContent += "Date,Time,Action Details\n";
+
+      snap.docs.forEach((docSnap) => {
+        const notif = docSnap.data();
+        const d = new Date(notif.createdAt);
+        const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(
+          d.getMonth() + 1
+        ).padStart(2, "0")}-${d.getFullYear()}`;
+        const timeStr = d.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+
+        // Escape quotes to prevent formatting breaks in Excel
+        const safeMsg = notif.message.replace(/"/g, '""');
+
+        csvContent += `"${dateStr}","${timeStr}","${safeMsg}"\n`;
+      });
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute(
+        "download",
+        `TOND_User_Activity_${startDate}_to_${endDate}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      alert("Error generating activity report: " + err.message);
+    }
+  };
 
   const getAreaActivity = (areaName) => {
     const areaEntries = allEntries.filter(
       (e) => e.area === areaName && e.createdAt >= todayStart
     );
     if (areaEntries.length === 0) return null;
-    areaEntries.sort((a, b) => b.createdAt - a.createdAt);
     const latest = areaEntries[0];
     const updates = areaEntries.map(
       (e) => `${e.itemName} (${e.locLabel}: ${e.qty})`
@@ -358,9 +458,9 @@ export default function AdminScreen({
 
             {showNotifications && (
               <div style={S.notificationPanel}>
-                <div style={S.notifHeader}>Recent Updates</div>
+                <div style={S.notifHeader}>Today's Updates</div>
                 <div style={S.notifBody}>
-                  {notifications.length === 0 ? (
+                  {todaysNotifications.length === 0 ? (
                     <div
                       style={{
                         padding: 16,
@@ -372,7 +472,7 @@ export default function AdminScreen({
                       No new notifications
                     </div>
                   ) : (
-                    notifications.map((n) => (
+                    todaysNotifications.map((n) => (
                       <div
                         key={n.id}
                         style={{
@@ -446,7 +546,7 @@ export default function AdminScreen({
 
       {/* ── TABS ── */}
       <div style={S.tabContainer}>
-        {["ITEMS", "REPORTS", "ACTIVITY"].map((tab) => (
+        {["ITEMS", "REPORTS", "STATUS", "ACTIVITY"].map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -456,10 +556,12 @@ export default function AdminScreen({
             }}
           >
             {tab === "ITEMS"
-              ? "Extra Items"
+              ? "Items"
               : tab === "REPORTS"
               ? "Reports"
-              : "Activity Log"}
+              : tab === "STATUS"
+              ? "Status"
+              : "User Log"}
           </button>
         ))}
       </div>
@@ -489,7 +591,7 @@ export default function AdminScreen({
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {EXTRA_ITEMS.map((itemName) => {
+            {displayItems.map((itemName) => {
               const actual = total(itemName, area);
               const par = parValues[itemName] || 0;
               const variance = actual - par;
@@ -549,11 +651,11 @@ export default function AdminScreen({
       {activeTab === "REPORTS" && (
         <div style={S.card}>
           <div style={{ padding: "24px 16px" }}>
-            <div style={S.cardName}>Export Audit Report</div>
+            <div style={S.cardName}>Export Data Reports</div>
             <div style={{ ...S.cardSub, marginBottom: 20 }}>
-              Select a date range to generate a CSV Excel file of all item
-              tracking changes.
+              Select a date range to generate a CSV Excel file.
             </div>
+
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>Start Date</div>
               <input
@@ -563,6 +665,7 @@ export default function AdminScreen({
                 style={S.input}
               />
             </div>
+
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>End Date</div>
               <input
@@ -572,21 +675,47 @@ export default function AdminScreen({
                 style={S.input}
               />
             </div>
-            <button
-              onClick={exportCSV}
-              style={{ ...S.saveBtn, width: "100%", marginTop: 10 }}
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                marginTop: 10,
+              }}
             >
-              Download CSV Report
-            </button>
+              <button
+                onClick={exportCSV}
+                style={{ ...S.saveBtn, width: "100%" }}
+              >
+                Download Inventory Report
+              </button>
+
+              {/* Only Creators can pull deep historical User Logs */}
+              {isCreator && (
+                <button
+                  onClick={exportActivityReport}
+                  style={{
+                    ...S.saveBtn,
+                    width: "100%",
+                    background: "#162236",
+                    color: C.text,
+                    border: `1px solid ${C.borderMid}`,
+                  }}
+                >
+                  Download User Activity Log
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── TAB CONTENT 3: ACTIVITY LOG ── */}
-      {activeTab === "ACTIVITY" && (
+      {/* ── TAB CONTENT 3: STATUS ── */}
+      {activeTab === "STATUS" && (
         <div>
           <div style={S.subheader}>
-            <span style={S.subheaderText}>Today's Activity Tracker</span>
+            <span style={S.subheaderText}>Today's Location Status</span>
             <span style={S.subheaderNote}>Live updates since midnight</span>
           </div>
 
@@ -674,6 +803,105 @@ export default function AdminScreen({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB CONTENT 4: USER ACTIVITY LOG ── */}
+      {activeTab === "ACTIVITY" && (
+        <div>
+          <div style={S.subheader}>
+            <span style={S.subheaderText}>Global Action Log</span>
+            <span style={S.subheaderNote}>
+              Today's complete timeline (Resets at midnight)
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {todaysNotifications.length === 0 ? (
+              <div style={S.card}>
+                <div
+                  style={{
+                    padding: "20px",
+                    textAlign: "center",
+                    color: C.muted,
+                    fontSize: 13,
+                  }}
+                >
+                  No actions have been logged today.
+                </div>
+              </div>
+            ) : (
+              todaysNotifications.map((notif) => {
+                const isRemoval = notif.message.includes("removed");
+                return (
+                  <div
+                    key={notif.id}
+                    style={{
+                      ...S.card,
+                      borderLeft: `4px solid ${
+                        isRemoval ? "#F87171" : "#34D399"
+                      }`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "14px 16px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            color: C.text,
+                            lineHeight: 1.4,
+                            marginBottom: 6,
+                          }}
+                        >
+                          {notif.message}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: C.muted,
+                            fontWeight: 500,
+                          }}
+                        >
+                          {formatFullDateTime(notif.createdAt)}
+                        </div>
+                      </div>
+
+                      {/* Delete Individual Log Button for Creators */}
+                      {isCreator && (
+                        <button
+                          onClick={() => deleteLogEntry(notif.id)}
+                          style={{
+                            background: "rgba(248,113,113,0.12)",
+                            color: "#F87171",
+                            border: "none",
+                            borderRadius: 8,
+                            width: 32,
+                            height: 32,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            cursor: "pointer",
+                            marginLeft: 12,
+                            flexShrink: 0,
+                          }}
+                          title="Delete Log"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
@@ -835,18 +1063,21 @@ const S = {
   },
   tabContainer: {
     display: "flex",
+    flexWrap: "wrap",
+    gap: 4,
     background: C.surface,
     borderRadius: 12,
-    padding: 4,
+    padding: 6,
     marginBottom: 20,
     border: `1px solid ${C.borderMid}`,
   },
   tabBtn: {
     flex: 1,
+    minWidth: "65px",
     background: "transparent",
     border: "none",
-    padding: "10px 0",
-    fontSize: 13,
+    padding: "10px 4px",
+    fontSize: 12,
     fontWeight: 600,
     color: C.muted,
     borderRadius: 8,

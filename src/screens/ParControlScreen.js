@@ -1,6 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { db } from "../firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  limit,
+  getDocs,
+} from "firebase/firestore";
 
 const DEFAULT_ITEMS = [
   { id: 1, name: "Child Bed", par: 0 },
@@ -11,14 +19,43 @@ const DEFAULT_ITEMS = [
   { id: 6, name: "Zipper", par: 0 },
 ];
 
+// Helper function to sort items alphabetically by name
+const sortAlphabetically = (itemsArray) => {
+  return [...itemsArray].sort((a, b) => a.name.localeCompare(b.name));
+};
+
 export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
-  const [items, setItems] = useState(DEFAULT_ITEMS);
+  // Initialize with sorted default items as a fallback
+  const [items, setItems] = useState(() => sortAlphabetically(DEFAULT_ITEMS));
   const [newItemName, setNewItemName] = useState("");
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [deploying, setDeploying] = useState(false);
-  const [deploySuccess, setDeploySuccess] = useState(false); // Added success state
+  const [deploySuccess, setDeploySuccess] = useState(false);
 
   const isCreator = user?.allocation === "Creator";
+
+  // FETCH LATEST DEPLOYMENT ON LOAD
+  useEffect(() => {
+    const fetchLatestDeployment = async () => {
+      try {
+        const q = query(
+          collection(db, "par_deployments"),
+          orderBy("deployedAt", "desc"),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const latest = snap.docs[0].data();
+          if (latest?.items && latest.items.length > 0) {
+            setItems(sortAlphabetically(latest.items));
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching PARs:", error);
+      }
+    };
+    fetchLatestDeployment();
+  }, []);
 
   const handleParChange = (id, value) => {
     if (!isCreator) return;
@@ -31,10 +68,10 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
 
   const addItem = () => {
     if (!isCreator || !newItemName.trim()) return;
-    setItems((prev) => [
-      ...prev,
-      { id: Date.now(), name: newItemName.trim(), par: 0 },
-    ]);
+    const newItem = { id: Date.now(), name: newItemName.trim(), par: 0 };
+
+    // Add the new item and instantly sort the list alphabetically
+    setItems((prev) => sortAlphabetically([...prev, newItem]));
     setNewItemName("");
   };
 
@@ -53,7 +90,6 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
         items,
         deployedAt: serverTimestamp(),
       });
-      // Show green success state for 3 seconds instead of annoying alert
       setDeploySuccess(true);
       setTimeout(() => setDeploySuccess(false), 3000);
     } catch (error) {
@@ -187,7 +223,7 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
         </div>
       )}
 
-      {/* ── DEPLOY ── (Removed sticky, changed colors on deploy state) */}
+      {/* ── DEPLOY ── */}
       <div style={{ marginTop: 24, paddingBottom: 20 }}>
         <button
           onClick={saveAndDeploy}
@@ -195,8 +231,8 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
           style={{
             ...S.deployBtn,
             opacity: deploying ? 0.7 : 1,
-            background: deploying || deploySuccess ? "#2ECC71" : C.gold, // Turns green
-            color: deploying || deploySuccess ? "#FFFFFF" : "#000", // Text turns white on green
+            background: deploying || deploySuccess ? "#2ECC71" : C.gold,
+            color: deploying || deploySuccess ? "#FFFFFF" : "#000",
             transition: "background-color 0.3s ease, color 0.3s ease",
           }}
         >
@@ -275,6 +311,8 @@ const S = {
     overflow: "hidden",
     zIndex: 999,
     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    transformOrigin: "top right",
+    animation: "scaleInFade 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   dropItem: {
     padding: "13px 16px",
