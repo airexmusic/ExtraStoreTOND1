@@ -714,6 +714,8 @@ const S = {
     overflow: "hidden",
     zIndex: 999,
     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    transformOrigin: "top right",
+    animation: "scaleInFade 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   dropItem: {
     padding: "13px 16px",
@@ -815,7 +817,10 @@ const S = {
     lineHeight: 1,
     marginLeft: 2,
   },
-  expandPanel: { padding: "0 16px 14px" },
+  expandPanel: {
+    padding: "0 16px 14px",
+    animation: "expandDown 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+  },
   divider: { height: "1px", background: C.border, marginBottom: 10 },
   locRow: {
     display: "flex",
@@ -835,11 +840,14 @@ const S = {
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0,0,0,0.8)",
+    background: "rgba(0,0,0,0.6)",
+    backdropFilter: "blur(4px)",
+    WebkitBackdropFilter: "blur(4px)",
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "center",
     zIndex: 999,
+    animation: "fadeIn 0.3s ease-out",
   },
   modal: {
     background: "#0F1B2D",
@@ -851,6 +859,7 @@ const S = {
     borderBottom: "none",
     maxHeight: "85vh",
     overflowY: "auto",
+    animation: "slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   modalHeader: {
     display: "flex",
@@ -922,7 +931,6 @@ const S = {
     outline: "none",
     boxSizing: "border-box",
     fontFamily: "inherit",
-    colorScheme: "dark",
   },
   addBtn: {
     background: C.gold,

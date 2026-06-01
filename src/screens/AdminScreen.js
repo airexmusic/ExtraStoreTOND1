@@ -822,6 +822,8 @@ const S = {
     overflow: "hidden",
     zIndex: 999,
     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    transformOrigin: "top right",
+    animation: "scaleInFade 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   dropItem: {
     padding: "13px 16px",
@@ -925,7 +927,10 @@ const S = {
     color: C.text,
     border: `1px solid ${C.border}`,
   },
-  expandPanel: { padding: "0 16px 14px" },
+  expandPanel: {
+    padding: "0 16px 14px",
+    animation: "expandDown 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
+  },
   divider: { height: "1px", background: C.border, marginBottom: 10 },
   locRow: {
     display: "flex",
@@ -945,11 +950,14 @@ const S = {
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0,0,0,0.8)",
+    background: "rgba(0,0,0,0.6)",
+    backdropFilter: "blur(4px)",
+    WebkitBackdropFilter: "blur(4px)",
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "center",
     zIndex: 999,
+    animation: "fadeIn 0.3s ease-out",
   },
   modal: {
     background: "#0F1B2D",
@@ -961,6 +969,7 @@ const S = {
     borderBottom: "none",
     maxHeight: "85vh",
     overflowY: "auto",
+    animation: "slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   modalHeader: {
     display: "flex",
@@ -1047,11 +1056,11 @@ const S = {
     boxSizing: "border-box",
   },
   notificationPanel: {
-    position: "fixed", // Breaks out of the button container and anchors to the screen
-    right: 16, // Always keeps a perfect 16px gap from the right edge of the phone
-    top: 70, // Places it cleanly just below your header
+    position: "fixed",
+    right: 16,
+    top: 70,
     width: "320px",
-    maxWidth: "calc(100vw - 32px)", // Forces it to shrink on tiny screens so it NEVER cuts off the left
+    maxWidth: "calc(100vw - 32px)",
     background: "#111F35",
     borderRadius: 14,
     border: `1px solid ${C.borderMid}`,
@@ -1060,7 +1069,9 @@ const S = {
     boxShadow: "0 12px 40px rgba(0,0,0,0.8)",
     display: "flex",
     flexDirection: "column",
-    maxHeight: "60vh", // Prevents it from getting cut off at the bottom on shorter phones
+    maxHeight: "60vh",
+    transformOrigin: "top right",
+    animation: "scaleInFade 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   notifHeader: {
     padding: "12px 16px",

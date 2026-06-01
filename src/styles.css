@@ -1,228 +1,276 @@
 /* =========================================
    GLOBAL RESET & FONTS (iOS SF Pro Style)
    ========================================= */
-   *, *::before, *::after {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-  
-  html, body {
-    margin: 0;
-    padding: 0;
-    overflow-x: hidden; /* Stops horizontal scrolling and UI shifting */
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
-      Roboto, Helvetica, sans-serif;
-    background-color: #07101E; /* Matched to your React UI theme */
-    color: #ffffff;
-    -webkit-font-smoothing: antialiased;
-  }
-  
-  /* =========================================
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden; /* Stops horizontal scrolling and UI shifting */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    Roboto, Helvetica, sans-serif;
+  background-color: #07101e; /* Matched to your React UI theme */
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* =========================================
        SPLASH SCREEN
        ========================================= */
-  .splash-container {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    align-items: center;
-    height: 100vh;
-    background: linear-gradient(135deg, #1a2942 0%, #07101E 100%);
-    padding: 60px 20px;
+.splash-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  height: 100vh;
+  background: linear-gradient(135deg, #1a2942 0%, #07101e 100%);
+  padding: 60px 20px;
+}
+
+.splash-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 25vh;
+}
+
+.splash-logo-placeholder {
+  width: 90px;
+  height: 90px;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border-radius: 22%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.logo-text {
+  color: #d4af37;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.splash-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 1px;
+  margin: 0 0 8px 0;
+  text-align: center;
+}
+
+.splash-subtitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: #d4af37;
+  letter-spacing: 3px;
+  margin: 0;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.splash-spinner-container {
+  margin-bottom: 40px;
+}
+
+.ios-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #d4af37;
+  border-radius: 50%;
+  animation: spin 1s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
   }
-  
-  .splash-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-top: 25vh;
+  100% {
+    transform: rotate(360deg);
   }
-  
-  .splash-logo-placeholder {
-    width: 90px;
-    height: 90px;
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
-    border-radius: 22%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    margin-bottom: 24px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  }
-  
-  .logo-text {
-    color: #d4af37;
-    font-size: 15px;
-    font-weight: 800;
-    letter-spacing: 2px;
-  }
-  
-  .splash-title {
-    font-size: 24px;
-    font-weight: 800;
-    color: #ffffff;
-    letter-spacing: 1px;
-    margin: 0 0 8px 0;
-    text-align: center;
-  }
-  
-  .splash-subtitle {
-    font-size: 13px;
-    font-weight: 500;
-    color: #d4af37;
-    letter-spacing: 3px;
-    margin: 0;
-    text-align: center;
-    text-transform: uppercase;
-  }
-  
-  .splash-spinner-container {
-    margin-bottom: 40px;
-  }
-  
-  .ios-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid rgba(255, 255, 255, 0.1);
-    border-top-color: #d4af37;
-    border-radius: 50%;
-    animation: spin 1s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
-  }
-  
-  @keyframes spin {
-    0% {
-      transform: rotate(0deg);
-    }
-    100% {
-      transform: rotate(360deg);
-    }
-  }
-  
-  /* =========================================
+}
+
+/* =========================================
        LOGIN & REGISTER SCREEN
        ========================================= */
-  .login-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    padding: 20px;
-    background: linear-gradient(135deg, #1a2942 0%, #07101E 100%);
-  }
-  
-  .login-box {
-    background-color: #ffffff;
-    padding: 40px 32px;
-    border-radius: 20px;
-    width: 100%;
-    max-width: 360px;
-    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
-    text-align: center;
-    color: #07101E;
-  }
-  
-  .gold-text {
-    color: #d4af37;
-    font-size: 11px;
-    letter-spacing: 2px;
-    font-weight: 800;
-    text-transform: uppercase;
-    margin-bottom: 4px;
-  }
-  
-  .login-title {
-    margin-top: 0px;
-    margin-bottom: 24px;
-    font-size: 26px;
-    font-weight: 800;
-  }
-  
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  
-  .light-input {
-    width: 100%;
-    background-color: #f9f9f9;
-    border: 1px solid #d1d5db;
-    color: #333333;
-    padding: 14px 16px;
-    border-radius: 8px;
-    font-size: 15px;
-    outline: none;
-  }
-  
-  .pill-button {
-    width: 100%;
-    background-color: #1a2942;
-    color: #d4af37;
-    padding: 16px;
-    border-radius: 50px;
-    font-size: 15px;
-    font-weight: 700;
-    border: none;
-    cursor: pointer;
-    margin-top: 8px;
-  }
-  
-  .toggle-text {
-    margin-top: 24px;
-    color: #6b7280;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  
-  /* =========================================
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  background: linear-gradient(135deg, #1a2942 0%, #07101e 100%);
+}
+
+.login-box {
+  background-color: #ffffff;
+  padding: 40px 32px;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  color: #07101e;
+}
+
+.gold-text {
+  color: #d4af37;
+  font-size: 11px;
+  letter-spacing: 2px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.login-title {
+  margin-top: 0px;
+  margin-bottom: 24px;
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.light-input {
+  width: 100%;
+  background-color: #f9f9f9;
+  border: 1px solid #d1d5db;
+  color: #333333;
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+}
+
+.pill-button {
+  width: 100%;
+  background-color: #1a2942;
+  color: #d4af37;
+  padding: 16px;
+  border-radius: 50px;
+  font-size: 15px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.toggle-text {
+  margin-top: 24px;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* =========================================
        DASHBOARDS
        ========================================= */
-  .app-container {
-    max-width: 600px;
-    margin: 0 auto;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background-color: #07101E;
+.app-container {
+  max-width: 600px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #07101e;
+}
+
+.top-bar {
+  background-color: #162032;
+  padding: 20px;
+  border-bottom: 2px solid #d4af37;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card {
+  background-color: #162032;
+  border-radius: 12px;
+  padding: 20px;
+  margin: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.par-input {
+  background-color: #07101e;
+  border: 1px solid #d4af37;
+  color: white;
+  width: 60px;
+  text-align: center;
+  border-radius: 8px;
+  padding: 8px;
+  outline: none;
+}
+
+.save-btn {
+  background-color: #d4af37;
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+/* =========================================
+     FLUID UI ANIMATIONS
+     ========================================= */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
   }
-  
-  .top-bar {
-    background-color: #162032;
-    padding: 20px;
-    border-bottom: 2px solid #d4af37;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  to {
+    opacity: 1;
   }
-  
-  .card {
-    background-color: #162032;
-    border-radius: 12px;
-    padding: 20px;
-    margin: 12px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+}
+
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
   }
-  
-  .par-input {
-    background-color: #07101E;
-    border: 1px solid #d4af37;
-    color: white;
-    width: 60px;
-    text-align: center;
-    border-radius: 8px;
-    padding: 8px;
-    outline: none;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
-  
-  .save-btn {
-    background-color: #d4af37;
-    color: #000;
-    border: none;
-    border-radius: 8px;
-    font-weight: 700;
-    padding: 8px 16px;
-    cursor: pointer;
+}
+
+@keyframes scaleInFade {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
   }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes expandDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
