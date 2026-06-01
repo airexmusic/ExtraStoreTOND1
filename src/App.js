@@ -7,13 +7,27 @@ import ParControlScreen from "./screens/ParControlScreen";
 import "./styles.css";
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState("SPLASH");
+  // 1. Initialize user details from localStorage if they exist
+  const [userDetails, setUserDetails] = useState(() => {
+    const savedUser = localStorage.getItem("tondSession");
+    return savedUser
+      ? JSON.parse(savedUser)
+      : {
+          name: "",
+          role: "",
+          allocation: "",
+          shift: "",
+        };
+  });
 
-  const [userDetails, setUserDetails] = useState({
-    name: "",
-    role: "",
-    allocation: "",
-    shift: "",
+  // 2. Auto-route to the correct screen on refresh if a session exists
+  const [currentScreen, setCurrentScreen] = useState(() => {
+    const savedUser = localStorage.getItem("tondSession");
+    if (savedUser) {
+      const user = JSON.parse(savedUser);
+      return user.role === "CREATOR" ? "CREATOR_PICKER" : "STAFF";
+    }
+    return "SPLASH";
   });
 
   const handleLoginSuccess = (role, name, allocation, shift) => {
@@ -25,6 +39,8 @@ export default function App() {
     };
 
     setUserDetails(userData);
+    // Save to memory for persistence
+    localStorage.setItem("tondSession", JSON.stringify(userData));
 
     // Creator gets dashboard picker
     if (role === "CREATOR") {
@@ -44,15 +60,28 @@ export default function App() {
       shift: "",
     });
 
+    // Clear from memory
+    localStorage.removeItem("tondSession");
+
+    // Clear Firebase Auth session
+    import("firebase/auth").then(({ signOut }) => {
+      import("./firebase").then(({ auth }) => signOut(auth));
+    });
+
     setCurrentScreen("LOGIN");
   };
 
   const handleUpdateMeta = (allocation, shift) => {
-    setUserDetails((prev) => ({
-      ...prev,
-      allocation,
-      shift,
-    }));
+    setUserDetails((prev) => {
+      const updated = {
+        ...prev,
+        allocation,
+        shift,
+      };
+      // Keep localStorage updated if they change shift mid-session
+      localStorage.setItem("tondSession", JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const handleSwitchRole = (screen) => {

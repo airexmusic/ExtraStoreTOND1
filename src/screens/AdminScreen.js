@@ -1048,9 +1048,10 @@ const S = {
   },
   notificationPanel: {
     position: "absolute",
-    right: 0,
+    right: -10, // Pulls it slightly away from the edge
     top: 40,
-    width: 320,
+    width: "320px",
+    maxWidth: "85vw", // Forces it to shrink on smaller screens so it never bleeds off
     background: "#111F35",
     borderRadius: 14,
     border: `1px solid ${C.borderMid}`,
