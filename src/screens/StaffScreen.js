@@ -99,12 +99,18 @@ export default function StaffDashboard({
   const [staged, setStaged] = useState([]);
   const [saving, setSaving] = useState(false);
 
+  // Status Check Success State
+  const [checkSuccess, setCheckSuccess] = useState(false);
+
   const tapTimer = useRef(null);
   const isCreator = user?.role === "CREATOR";
+  const todayStart = new Date().setHours(0, 0, 0, 0);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "extra_item_entries"), (snap) => {
-      setAllEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const fetchedDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      fetchedDocs.sort((a, b) => b.createdAt - a.createdAt);
+      setAllEntries(fetchedDocs);
     });
     return () => unsub();
   }, []);
@@ -219,7 +225,7 @@ export default function StaffDashboard({
           createdAt: Date.now(),
         });
 
-        // 2. Generate permanent ADD receipt
+        // 2. Trigger the notification for the Admin dashboard
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} placed ${
             e.qty
@@ -239,10 +245,10 @@ export default function StaffDashboard({
 
   async function removeEntry(id) {
     try {
-      // 1. Find the item details BEFORE deleting it
+      // 1. Find the entry data BEFORE we delete it so we can log it
       const entryToDel = allEntries.find((e) => e.id === id);
 
-      // 2. Generate permanent REMOVE receipt in the log
+      // 2. Write the permanent receipt to the notifications database
       if (entryToDel) {
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} removed ${entryToDel.qty} ${
@@ -254,12 +260,77 @@ export default function StaffDashboard({
         });
       }
 
-      // 3. Delete the live inventory item
+      // 3. Actually delete the item from the live inventory
       await deleteDoc(doc(db, "extra_item_entries", id));
     } catch (err) {
       alert("Remove failed: " + err.message);
     }
   }
+
+  // ─── ACCOUNTABILITY SIGN-OFF STATUS LOGIC ───
+
+  // Find if there is already a ghost entry for this area today
+  const currentAreaGhostEntries = allEntries.filter(
+    (e) =>
+      e.area === area &&
+      e.itemName === "Status Check" &&
+      e.createdAt >= todayStart
+  );
+  const isAreaSigned = currentAreaGhostEntries.length > 0;
+
+  const markAreaChecked = async () => {
+    setSaving(true);
+    try {
+      // Save Ghost Entry to trigger Status Tab timestamp update
+      await setDoc(doc(db, "extra_item_entries", makeId()), {
+        itemName: "Status Check",
+        area,
+        locLabel: area,
+        qty: 0,
+        createdBy: user?.name || "Unknown",
+        createdAt: Date.now(),
+      });
+
+      // Save Receipt to User Log
+      await addDoc(collection(db, "notifications"), {
+        message: `${user?.name || "Unknown"} signed off and verified ${area}`,
+        createdBy: user?.name || "Unknown",
+        createdAt: Date.now(),
+        readBy: [],
+      });
+
+      setCheckSuccess(true);
+      setTimeout(() => setCheckSuccess(false), 3000);
+    } catch (err) {
+      alert("Update failed: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const unsignArea = async () => {
+    setSaving(true);
+    try {
+      // Delete all ghost entries for this area from today
+      for (const entry of currentAreaGhostEntries) {
+        await deleteDoc(doc(db, "extra_item_entries", entry.id));
+      }
+
+      // Log the unsign action
+      await addDoc(collection(db, "notifications"), {
+        message: `${
+          user?.name || "Unknown"
+        } removed verification (unsigned) for ${area}`,
+        createdBy: user?.name || "Unknown",
+        createdAt: Date.now(),
+        readBy: [],
+      });
+    } catch (err) {
+      alert("Unsign failed: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const openMetaEdit = () => {
     setEditAllocation(user?.allocation || "Floor Incharge");
@@ -294,7 +365,7 @@ export default function StaffDashboard({
               userSelect: "none",
             }}
             onDoubleClick={openMetaEdit}
-            title="Double-click to edit shift details"
+            title="Click to edit shift details"
           >
             {user?.allocation || "Staff"} • {user?.shift || "Day"} Shift ✎
           </div>
@@ -448,6 +519,46 @@ export default function StaffDashboard({
           );
         })}
       </div>
+
+      {/* ── DYNAMIC ACCOUNTABILITY SIGN OFF BUTTON ── */}
+      {!isAll && (
+        <div style={{ marginTop: 24, paddingBottom: 20 }}>
+          {isAreaSigned ? (
+            <button
+              onClick={unsignArea}
+              disabled={saving}
+              style={{
+                ...S.saveBtn,
+                width: "100%",
+                background: "rgba(248,113,113,0.12)",
+                color: "#F87171",
+                border: "1px solid rgba(248,113,113,0.3)",
+                transition: "all 0.3s ease",
+              }}
+            >
+              {saving ? "Updating..." : `✕ Unsign ${area}`}
+            </button>
+          ) : (
+            <button
+              onClick={markAreaChecked}
+              disabled={saving || checkSuccess}
+              style={{
+                ...S.saveBtn,
+                width: "100%",
+                background: saving || checkSuccess ? "#2ECC71" : C.gold,
+                color: saving || checkSuccess ? "#FFFFFF" : "#000",
+                transition: "background-color 0.3s ease, color 0.3s ease",
+              }}
+            >
+              {checkSuccess
+                ? "Signed Successfully ✓"
+                : saving
+                ? "Signing..."
+                : `Sign & Save ${area} Status`}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── ITEM ENTRY MODAL ── */}
       {modalItem && (
