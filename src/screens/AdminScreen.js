@@ -7,6 +7,9 @@ import {
   limit,
   getDocs,
   onSnapshot,
+  doc,
+  updateDoc,
+  arrayUnion,
 } from "firebase/firestore";
 
 // ─── CATALOG & CONSTANTS ──────────────────────────────────────────────────────
@@ -73,6 +76,10 @@ export default function AdminScreen({
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [toasts, setToasts] = useState([]);
 
+  // Bell Notification State
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
   // Meta Edit Modal Fields
   const [showMetaEdit, setShowMetaEdit] = useState(false);
   const [editAllocation, setEditAllocation] = useState("");
@@ -84,6 +91,7 @@ export default function AdminScreen({
   const isCreator = user?.allocation === "Creator";
   const initialLoadDone = useRef(false);
 
+  // 1. Fetch live updates for toasts and actual item entries
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "extra_item_entries"), (snap) => {
       snap.docChanges().forEach((change) => {
@@ -104,6 +112,20 @@ export default function AdminScreen({
     return () => unsub();
   }, []);
 
+  // 2. Fetch notifications for the bell icon
+  useEffect(() => {
+    const q = query(
+      collection(db, "notifications"),
+      orderBy("createdAt", "desc"),
+      limit(50)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setNotifications(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  // 3. Fetch par values
   useEffect(() => {
     (async () => {
       try {
@@ -126,6 +148,31 @@ export default function AdminScreen({
       } catch (_) {}
     })();
   }, []);
+
+  // Compute unread count
+  const unreadCount = notifications.filter(
+    (n) => !n.readBy?.includes(user?.name)
+  ).length;
+
+  // Toggle bell & mark as read
+  const handleToggleNotifications = () => {
+    setShowNotifications((prev) => !prev);
+    // If we are opening the panel and there are unread notifications
+    if (!showNotifications && unreadCount > 0) {
+      notifications.forEach(async (n) => {
+        if (!n.readBy?.includes(user?.name)) {
+          try {
+            const ref = doc(db, "notifications", n.id);
+            await updateDoc(ref, {
+              readBy: arrayUnion(user?.name || "Admin"),
+            });
+          } catch (err) {
+            console.error("Error marking notification as read:", err);
+          }
+        }
+      });
+    }
+  };
 
   function filtered(itemName, filterArea) {
     return allEntries.filter(
@@ -159,29 +206,57 @@ export default function AdminScreen({
     }
     const start = new Date(startDate).getTime();
     const end = new Date(endDate).setHours(23, 59, 59, 999);
+
     const rangeEntries = allEntries.filter(
       (e) => e.createdAt >= start && e.createdAt <= end
     );
-    let csvContent =
-      "Item,Total Qty,Variance,Locations,Updated By,Date of Updation\n";
+
+    // \uFEFF is a Byte Order Mark (BOM) that forces Excel to read the CSV properly
+    let csvContent = "\uFEFF";
+
+    // Headers matching your Excel screenshot
+    csvContent += "Items,Total Par,Variance,Locations,Updated By,Date\n";
 
     EXTRA_ITEMS.forEach((itemName) => {
       const itemEntries = rangeEntries.filter((e) => e.itemName === itemName);
+
+      // If you only want to download items that actually have entries, uncomment the next line:
+      // if (itemEntries.length === 0) return;
+
       const actualQty = itemEntries.reduce(
         (sum, e) => sum + (parseInt(e.qty) || 0),
         0
       );
       const par = parValues[itemName] || 0;
       const variance = actualQty - par;
-      const locs = itemEntries.map((e) => `${e.area}(${e.locLabel})`);
-      const uniqueLocs = [...new Set(locs)].join(" | ");
+
+      // Cleanly format locations (e.g., "Floor 1 Pantry A")
+      const locs = itemEntries.map((e) => {
+        // Only append area if it's not already completely obvious
+        return `${e.area} ${e.locLabel}`.trim();
+      });
+
+      // Join with \n to force in-cell line breaks in Excel
+      const uniqueLocs = [...new Set(locs)].join("\n");
       const updatedByList = [
         ...new Set(itemEntries.map((e) => e.createdBy)),
-      ].join(" | ");
+      ].join("\n");
+
+      // Format dates perfectly to DD-MM-YYYY
       const datesList = [
-        ...new Set(itemEntries.map((e) => formatDate(e.createdAt))),
-      ].join(" | ");
-      csvContent += `"${itemName}","${actualQty}","${variance}","${uniqueLocs}","${updatedByList}","${datesList}"\n`;
+        ...new Set(
+          itemEntries.map((e) => {
+            const d = new Date(e.createdAt);
+            const day = String(d.getDate()).padStart(2, "0");
+            const month = String(d.getMonth() + 1).padStart(2, "0");
+            const year = d.getFullYear();
+            return `${day}-${month}-${year}`;
+          })
+        ),
+      ].join("\n");
+
+      // Wrap variables in double quotes "" so Excel respects the \n as an inside-the-cell break
+      csvContent += `"${itemName}","${par}","${variance}","${uniqueLocs}","${updatedByList}","${datesList}"\n`;
     });
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -270,6 +345,55 @@ export default function AdminScreen({
             position: "relative",
           }}
         >
+          {/* BELL ICON */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={handleToggleNotifications}
+              style={{ ...S.ghostBtn, fontSize: 18, padding: "2px 6px" }}
+              title="Notifications"
+            >
+              🔔
+              {unreadCount > 0 && <div style={S.badge}>{unreadCount}</div>}
+            </button>
+
+            {showNotifications && (
+              <div style={S.notificationPanel}>
+                <div style={S.notifHeader}>Recent Updates</div>
+                <div style={S.notifBody}>
+                  {notifications.length === 0 ? (
+                    <div
+                      style={{
+                        padding: 16,
+                        color: C.muted,
+                        fontSize: 13,
+                        textAlign: "center",
+                      }}
+                    >
+                      No new notifications
+                    </div>
+                  ) : (
+                    notifications.map((n) => (
+                      <div
+                        key={n.id}
+                        style={{
+                          ...S.notifItem,
+                          background: !n.readBy?.includes(user?.name)
+                            ? "rgba(212, 175, 55, 0.05)"
+                            : "transparent",
+                        }}
+                      >
+                        <div style={S.notifMsg}>{n.message}</div>
+                        <div style={S.notifTime}>
+                          {formatTime(n.createdAt)} • {formatDate(n.createdAt)}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div style={{ position: "relative" }}>
             <button
               onClick={() => setShowRoleMenu((v) => !v)}
@@ -518,7 +642,11 @@ export default function AdminScreen({
                           {activity.latestUser}
                         </div>
                         <div
-                          style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 6,
+                          }}
                         >
                           {activity.updates.map((upd, i) => (
                             <span
@@ -901,5 +1029,64 @@ const S = {
     cursor: "pointer",
     fontFamily: "inherit",
     letterSpacing: "0.02em",
+  },
+
+  // ─── NOTIFICATION NEW STYLES ───
+  badge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    background: "#EF4444",
+    color: "#FFF",
+    fontSize: 10,
+    fontWeight: 700,
+    borderRadius: 10,
+    padding: "2px 5px",
+    minWidth: 14,
+    textAlign: "center",
+    boxSizing: "border-box",
+  },
+  notificationPanel: {
+    position: "absolute",
+    right: 0,
+    top: 40,
+    width: 320,
+    background: "#111F35",
+    borderRadius: 14,
+    border: `1px solid ${C.borderMid}`,
+    overflow: "hidden",
+    zIndex: 1000,
+    boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    display: "flex",
+    flexDirection: "column",
+    maxHeight: 400,
+  },
+  notifHeader: {
+    padding: "12px 16px",
+    fontSize: 13,
+    fontWeight: 700,
+    color: C.text,
+    borderBottom: `1px solid ${C.border}`,
+    background: "#162236",
+  },
+  notifBody: {
+    overflowY: "auto",
+  },
+  notifItem: {
+    padding: "12px 16px",
+    borderBottom: `1px solid ${C.border}`,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    transition: "background 0.2s",
+  },
+  notifMsg: {
+    fontSize: 13,
+    color: "#B0BFDA",
+    lineHeight: 1.4,
+  },
+  notifTime: {
+    fontSize: 11,
+    color: C.muted,
   },
 };

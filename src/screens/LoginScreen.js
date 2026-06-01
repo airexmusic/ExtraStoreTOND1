@@ -3,6 +3,9 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
 } from "firebase/auth";
 import { auth } from "../firebase";
 
@@ -12,6 +15,9 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [role, setRole] = useState("Associate");
+
+  // New Remember Me State
+  const [rememberMe, setRememberMe] = useState(true);
 
   // Handover state
   const [allocation, setAllocation] = useState("Floor Incharge");
@@ -25,9 +31,7 @@ export default function LoginScreen({ onLoginSuccess }) {
     // 1. CREATOR BACKDOOR
     if (identifier.toLowerCase() === "rahulsengupta" && password === "1234") {
       setIsLoading(false);
-      setRole("CREATOR");
-      setUsername("Rahul Sengupta");
-      setView("handover");
+      onLoginSuccess("CREATOR", "Rahul Sengupta", "Creator", "Creator");
       return;
     }
 
@@ -45,6 +49,13 @@ export default function LoginScreen({ onLoginSuccess }) {
       const email = identifier.includes("@")
         ? identifier
         : `${identifier}@tond.com`;
+
+      // Apply the chosen persistence before authenticating
+      const persistenceType = rememberMe
+        ? browserLocalPersistence
+        : browserSessionPersistence;
+      await setPersistence(auth, persistenceType);
+
       if (view === "register") {
         await createUserWithEmailAndPassword(auth, email, password);
       } else {
@@ -208,6 +219,16 @@ export default function LoginScreen({ onLoginSuccess }) {
             required
           />
 
+          <label style={S.checkboxWrap}>
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={S.checkbox}
+            />
+            Keep me logged in
+          </label>
+
           <button
             style={{ ...S.btn, marginTop: 8 }}
             type="submit"
@@ -348,6 +369,25 @@ const S = {
     boxSizing: "border-box",
     fontFamily: "inherit",
     transition: "border-color 0.2s",
+  },
+  // ─── NEW CHECKBOX STYLES ───
+  checkboxWrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    color: C.muted,
+    fontSize: 13,
+    cursor: "pointer",
+    userSelect: "none",
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  checkbox: {
+    accentColor: C.gold,
+    width: 16,
+    height: 16,
+    cursor: "pointer",
+    margin: 0,
   },
   btn: {
     width: "100%",
