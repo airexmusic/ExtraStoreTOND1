@@ -72,6 +72,24 @@ function formatFullDateTime(ts) {
   })}`;
 }
 
+// ─── ACCOUNTABILITY CHECKER ──────────────────────────────────────────────────
+const checkAccountability = (user, area, allEntries, recentLimit) => {
+  if (area === "All Areas") return false;
+
+  let needsSigning = true;
+
+  // Check if this area has been signed off for this shift in the last 12 hours
+  const hasSigned = allEntries.some(
+    (e) =>
+      e.itemName === "Status Check" &&
+      e.area === area &&
+      e.shift === user?.shift &&
+      e.createdAt >= recentLimit
+  );
+
+  return needsSigning && !hasSigned;
+};
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function AdminScreen({
   user,
@@ -79,9 +97,12 @@ export default function AdminScreen({
   onSwitchRole,
   onUpdateMeta,
 }) {
-  const [activeTab, setActiveTab] = useState("ITEMS");
+  const [activeTab, setActiveTab] = useState("STATUS");
   const [area, setArea] = useState("All Areas");
   const [allEntries, setAllEntries] = useState([]);
+
+  // Shift Dropdown State
+  const [expandedStatusShift, setExpandedStatusShift] = useState("Morning");
 
   // Dynamic Items and Par State
   const [displayItems, setDisplayItems] = useState(FALLBACK_ITEMS);
@@ -105,7 +126,11 @@ export default function AdminScreen({
   const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
   const initialLoadDone = useRef(false);
 
-  const todayStart = new Date().setHours(0, 0, 0, 0);
+  // Use a rolling 12-hour window instead of strict midnight to support Night Shift
+  const recentLimit = Date.now() - 12 * 60 * 60 * 1000;
+
+  // Accountability Logic
+  const showBanner = checkAccountability(user, area, allEntries, recentLimit);
 
   // 1. Fetch live updates for toasts and actual item entries
   useEffect(() => {
@@ -183,8 +208,9 @@ export default function AdminScreen({
     return () => unsub();
   }, []);
 
+  // Filter bell notifications to the last 12 hours instead of since midnight
   const todaysNotifications = notifications.filter(
-    (n) => n.createdAt >= todayStart
+    (n) => n.createdAt >= recentLimit
   );
 
   const unreadCount = todaysNotifications.filter(
@@ -260,48 +286,59 @@ export default function AdminScreen({
       (e) => e.createdAt >= start && e.createdAt <= end
     );
 
+    if (rangeEntries.length === 0) {
+      alert("No inventory data found for this date range.");
+      return;
+    }
+
+    rangeEntries.sort((a, b) => {
+      const dateA = new Date(a.createdAt).setHours(0, 0, 0, 0);
+      const dateB = new Date(b.createdAt).setHours(0, 0, 0, 0);
+      if (dateA !== dateB) return dateA - dateB;
+
+      const shiftOrder = { Morning: 1, Afternoon: 2, Night: 3, Unknown: 4 };
+      const shiftA = shiftOrder[a.shift || "Unknown"] || 99;
+      const shiftB = shiftOrder[b.shift || "Unknown"] || 99;
+      if (shiftA !== shiftB) return shiftA - shiftB;
+
+      return a.createdAt - b.createdAt;
+    });
+
     let csvContent = "\uFEFF";
-    csvContent += "Items,Total Par,Variance,Locations,Updated By,Date\n";
+    csvContent +=
+      "Date,Time,Shift,Action Type,Item Name,Quantity,Area,Specific Location,Incharge (Updated By),Current Master PAR\n";
 
-    displayItems.forEach((itemName) => {
-      const itemEntries = rangeEntries.filter((e) => e.itemName === itemName);
-
-      const actualQty = itemEntries.reduce(
-        (sum, e) => sum + (parseInt(e.qty) || 0),
-        0
-      );
-      const par = parValues[itemName] || 0;
-      const variance = actualQty - par;
-
-      const locs = itemEntries.map((e) => {
-        return `${e.area} ${e.locLabel}`.trim();
+    rangeEntries.forEach((e) => {
+      const d = new Date(e.createdAt);
+      const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(
+        d.getMonth() + 1
+      ).padStart(2, "0")}-${d.getFullYear()}`;
+      const timeStr = d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
       });
 
-      const uniqueLocs = [...new Set(locs)].join("\n");
-      const updatedByList = [
-        ...new Set(itemEntries.map((e) => e.createdBy)),
-      ].join("\n");
+      const shift = e.shift || "Not Recorded";
+      const isCheck = e.itemName === "Status Check";
+      const actionType = isCheck ? "Area Sign-off" : "Inventory Deployment";
+      const item = isCheck ? "Verification" : e.itemName;
+      const qty = isCheck ? "-" : e.qty || 0;
+      const area = e.area || "";
+      const loc = e.locLabel || "";
+      const creator = e.createdBy || "Unknown";
+      const par = isCheck ? "-" : parValues[e.itemName] || 0;
 
-      const datesList = [
-        ...new Set(
-          itemEntries.map((e) => {
-            const d = new Date(e.createdAt);
-            const day = String(d.getDate()).padStart(2, "0");
-            const month = String(d.getMonth() + 1).padStart(2, "0");
-            const year = d.getFullYear();
-            return `${day}-${month}-${year}`;
-          })
-        ),
-      ].join("\n");
-
-      csvContent += `"${itemName}","${par}","${variance}","${uniqueLocs}","${updatedByList}","${datesList}"\n`;
+      csvContent += `"${dateStr}","${timeStr}","${shift}","${actionType}","${item}","${qty}","${area}","${loc}","${creator}","${par}"\n`;
     });
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `TOND_Report_${startDate}_to_${endDate}.csv`);
+    link.setAttribute(
+      "download",
+      `TOND_Detailed_Inventory_${startDate}_to_${endDate}.csv`
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -332,7 +369,7 @@ export default function AdminScreen({
       }
 
       let csvContent = "\uFEFF";
-      csvContent += "Date,Time,Action Details\n";
+      csvContent += "Date,Time,Shift,User,Action Details\n";
 
       snap.docs.forEach((docSnap) => {
         const notif = docSnap.data();
@@ -345,9 +382,11 @@ export default function AdminScreen({
           minute: "2-digit",
         });
 
+        const shift = notif.shift || "Not Recorded";
+        const user = notif.createdBy || "Unknown";
         const safeMsg = notif.message.replace(/"/g, '""');
 
-        csvContent += `"${dateStr}","${timeStr}","${safeMsg}"\n`;
+        csvContent += `"${dateStr}","${timeStr}","${shift}","${user}","${safeMsg}"\n`;
       });
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -366,30 +405,58 @@ export default function AdminScreen({
     }
   };
 
-  // ─── FIXED: IGNORE ORPHANED DATA IN STATUS TAB ───
-  const getAreaActivity = (areaName) => {
-    const areaEntries = allEntries.filter(
-      (e) =>
-        e.area === areaName &&
-        e.createdAt >= todayStart &&
-        // ONLY allow items that are currently in the Master List, or valid Status Checks
-        (displayItems.includes(e.itemName) || e.itemName === "Status Check")
-    );
+  const getShiftStatusData = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    if (areaEntries.length === 0) return null;
-    const latest = areaEntries[0];
+    const yesterdayNight = today.getTime() + 23.5 * 60 * 60 * 1000 - 86400000;
+    const todayMorning = today.getTime() + 8 * 60 * 60 * 1000;
 
-    const updates = areaEntries.map((e) => {
-      if (e.itemName === "Status Check") return "Verified & Signed Off";
-      return `${e.itemName} (${e.locLabel}: ${e.qty})`;
-    });
-    const uniqueUpdates = [...new Set(updates)];
-
-    return {
-      latestUser: latest.createdBy,
-      time: latest.createdAt,
-      updates: uniqueUpdates,
+    const data = {
+      "Night (Previous)": {},
+      Morning: {},
+      Afternoon: {},
+      "Night (Today)": {},
     };
+
+    const shifts = Object.keys(data);
+    shifts.forEach((shift) => {
+      TRACKING_AREAS.forEach((area) => {
+        data[shift][area] = { updates: [], latestUser: null, time: 0 };
+      });
+    });
+
+    allEntries.forEach((e) => {
+      if (e.createdAt < yesterdayNight) return;
+      if (!displayItems.includes(e.itemName) && e.itemName !== "Status Check")
+        return;
+
+      let category = e.shift || "Morning";
+
+      if (category === "Night") {
+        category =
+          e.createdAt < todayMorning ? "Night (Previous)" : "Night (Today)";
+      }
+
+      if (data[category] && data[category][e.area]) {
+        const areaObj = data[category][e.area];
+        const text =
+          e.itemName === "Status Check"
+            ? "Verified & Signed Off"
+            : `${e.itemName} (${e.locLabel}: ${e.qty})`;
+
+        if (!areaObj.updates.includes(text)) {
+          areaObj.updates.push(text);
+        }
+
+        if (e.createdAt > areaObj.time) {
+          areaObj.time = e.createdAt;
+          areaObj.latestUser = e.createdBy;
+        }
+      }
+    });
+
+    return data;
   };
 
   const openMetaEdit = () => {
@@ -405,6 +472,27 @@ export default function AdminScreen({
 
   return (
     <div style={S.root}>
+      {/* ── ACCOUNTABILITY BANNER ── */}
+      {showBanner && (
+        <div
+          style={{
+            background: "#EF4444",
+            color: "#FFFFFF",
+            padding: "12px 16px",
+            borderRadius: 12,
+            marginBottom: 20,
+            fontWeight: 700,
+            fontSize: 14,
+            textAlign: "center",
+            boxShadow: "0 4px 12px rgba(239, 68, 68, 0.3)",
+            animation: "pulse 2s infinite",
+          }}
+        >
+          ⚠️ ACCOUNTABILITY ALERT: Please sign and save your status immediately
+          to complete your shift.
+        </div>
+      )}
+
       {/* ── TOAST NOTIFICATIONS ── */}
       <div style={S.toastContainer}>
         {toasts.map((t) => (
@@ -461,7 +549,7 @@ export default function AdminScreen({
 
             {showNotifications && (
               <div style={S.notificationPanel}>
-                <div style={S.notifHeader}>Today's Updates</div>
+                <div style={S.notifHeader}>Recent Updates</div>
                 <div style={S.notifBody}>
                   {todaysNotifications.length === 0 ? (
                     <div
@@ -502,37 +590,41 @@ export default function AdminScreen({
               onClick={() => setShowRoleMenu((v) => !v)}
               style={S.ghostBtn}
             >
-              Swap Role ▾
+              Switch ▾
             </button>
             {showRoleMenu && (
               <div style={S.dropdown}>
-                <div
-                  onClick={() => {
-                    onSwitchRole("ADMIN");
-                    setShowRoleMenu(false);
-                  }}
-                  style={S.dropItem}
-                >
-                  Admin
-                </div>
-                <div
-                  onClick={() => {
-                    onSwitchRole("STAFF");
-                    setShowRoleMenu(false);
-                  }}
-                  style={S.dropItem}
-                >
-                  Staff
-                </div>
-                {isCreator && (
+                {[
+                  ["ADMIN", "Admin Dashboard"],
+                  ["STAFF", "Staff Dashboard"],
+                  ...(isCreator ? [["PAR_CONTROL", "PAR Control"]] : []),
+                ].map(([k, l]) => (
                   <div
+                    key={k}
                     onClick={() => {
-                      onSwitchRole("PAR_CONTROL");
+                      onSwitchRole(k);
                       setShowRoleMenu(false);
                     }}
                     style={S.dropItem}
                   >
-                    PAR Control
+                    {l}
+                  </div>
+                ))}
+
+                {/* Manager Users visible only to Creator */}
+                {isCreator && (
+                  <div
+                    onClick={() => {
+                      onSwitchRole("USER_MGMT");
+                      setShowRoleMenu(false);
+                    }}
+                    style={{
+                      ...S.dropItem,
+                      borderTop: `1px solid ${C.border}`,
+                      color: C.gold,
+                    }}
+                  >
+                    Manage Users
                   </div>
                 )}
               </div>
@@ -656,7 +748,7 @@ export default function AdminScreen({
           <div style={{ padding: "24px 16px" }}>
             <div style={S.cardName}>Export Data Reports</div>
             <div style={{ ...S.cardSub, marginBottom: 20 }}>
-              Select a date range to generate a CSV Excel file.
+              Select a date range to generate a highly detailed CSV Excel file.
             </div>
 
             <div style={S.fieldBlock}>
@@ -691,7 +783,7 @@ export default function AdminScreen({
                 onClick={exportCSV}
                 style={{ ...S.saveBtn, width: "100%" }}
               >
-                Download Inventory Report
+                Download Master Inventory Log
               </button>
 
               {/* Only Creators can pull deep historical User Logs */}
@@ -706,7 +798,7 @@ export default function AdminScreen({
                     border: `1px solid ${C.borderMid}`,
                   }}
                 >
-                  Download User Activity Log
+                  Download Master User Activity Log
                 </button>
               )}
             </div>
@@ -715,109 +807,205 @@ export default function AdminScreen({
       )}
 
       {/* ── TAB CONTENT 3: STATUS ── */}
-      {activeTab === "STATUS" && (
-        <div>
-          <div style={S.subheader}>
-            <span style={S.subheaderText}>Today's Location Status</span>
-            <span style={S.subheaderNote}>Live updates since midnight</span>
-          </div>
+      {activeTab === "STATUS" &&
+        (() => {
+          const shiftData = getShiftStatusData();
+          const shiftsOrder = [
+            "Night (Previous)",
+            "Morning",
+            "Afternoon",
+            "Night (Today)",
+          ];
+          const shiftColors = {
+            "Night (Previous)": "#64748B",
+            Morning: "#F59E0B",
+            Afternoon: "#F97316",
+            "Night (Today)": "#3B82F6",
+          };
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {TRACKING_AREAS.map((areaName) => {
-              const activity = getAreaActivity(areaName);
-              const isUpdated = activity !== null;
+          return (
+            <div>
+              <div style={S.subheader}>
+                <span style={S.subheaderText}>Location Status</span>
+              </div>
 
-              return (
-                <div
-                  key={areaName}
-                  style={{
-                    ...S.card,
-                    borderLeft: `4px solid ${
-                      isUpdated ? "#34D399" : "#F87171"
-                    }`,
-                  }}
-                >
-                  <div style={{ padding: "14px 16px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {shiftsOrder.map((shiftName) => {
+                  const isExpanded = expandedStatusShift === shiftName;
+                  const activeColor = shiftColors[shiftName];
+
+                  return (
                     <div
+                      key={shiftName}
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginBottom: 6,
+                        ...S.card,
+                        transition: "all 0.3s ease",
+                        border: isExpanded
+                          ? `1px solid ${C.borderMid}`
+                          : `1px solid ${C.border}`,
                       }}
                     >
                       <div
-                        style={{ fontSize: 15, fontWeight: 700, color: C.text }}
-                      >
-                        {areaName}
-                      </div>
-                      <div
+                        onClick={() =>
+                          setExpandedStatusShift(isExpanded ? null : shiftName)
+                        }
                         style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: isUpdated ? "#34D399" : "#F87171",
+                          padding: "16px",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          cursor: "pointer",
+                          background: isExpanded
+                            ? "rgba(255,255,255,0.02)"
+                            : "transparent",
                         }}
                       >
-                        {isUpdated ? formatTime(activity.time) : "Not Updated"}
-                      </div>
-                    </div>
-
-                    {isUpdated ? (
-                      <div>
-                        <div
-                          style={{
-                            fontSize: 13,
-                            color: C.text,
-                            marginBottom: 6,
-                          }}
-                        >
-                          <span style={{ color: C.muted }}>Updated by: </span>
-                          {activity.latestUser}
-                        </div>
                         <div
                           style={{
                             display: "flex",
-                            flexWrap: "wrap",
-                            gap: 6,
+                            alignItems: "center",
+                            gap: 12,
                           }}
                         >
-                          {activity.updates.map((upd, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                background: "#162236",
-                                fontSize: 11,
-                                color: "#B0BFDA",
-                                padding: "4px 8px",
-                                borderRadius: 6,
-                                border: `1px solid ${C.border}`,
-                              }}
-                            >
-                              {upd}
-                            </span>
-                          ))}
+                          <div
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: "50%",
+                              backgroundColor: activeColor,
+                              boxShadow: `0 0 10px ${activeColor}80`,
+                            }}
+                          />
+                          <div
+                            style={{
+                              fontSize: 15,
+                              fontWeight: 600,
+                              color: C.text,
+                            }}
+                          >
+                            {shiftName} Shift
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            color: C.muted,
+                            fontSize: 20,
+                            transform: isExpanded
+                              ? "rotate(180deg)"
+                              : "rotate(0deg)",
+                          }}
+                        >
+                          ‹
                         </div>
                       </div>
-                    ) : (
-                      <div style={{ fontSize: 13, color: C.muted }}>
-                        No records logged for this area today.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+
+                      {isExpanded && (
+                        <div
+                          style={{
+                            padding: "0 16px 16px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                          }}
+                        >
+                          <div style={S.divider} />
+                          {TRACKING_AREAS.map((areaName) => {
+                            const areaData = shiftData[shiftName][areaName];
+                            const isUpdated = areaData.updates.length > 0;
+
+                            return (
+                              <div key={areaName} style={S.statusAreaCard}>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                    marginBottom: isUpdated ? 8 : 0,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: "50%",
+                                        backgroundColor: isUpdated
+                                          ? "#34D399"
+                                          : "#F87171",
+                                      }}
+                                    />
+                                    <div
+                                      style={{
+                                        fontSize: 14,
+                                        fontWeight: 600,
+                                        color: C.text,
+                                      }}
+                                    >
+                                      {areaName}
+                                    </div>
+                                  </div>
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: 500,
+                                      color: isUpdated ? "#34D399" : C.muted,
+                                    }}
+                                  >
+                                    {isUpdated
+                                      ? formatTime(areaData.time)
+                                      : "Not Updated"}
+                                  </div>
+                                </div>
+                                {isUpdated && (
+                                  <div style={{ paddingLeft: 14 }}>
+                                    <div
+                                      style={{
+                                        fontSize: 12,
+                                        color: C.muted,
+                                        marginBottom: 8,
+                                      }}
+                                    >
+                                      By: {areaData.latestUser}
+                                    </div>
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        flexWrap: "wrap",
+                                        gap: 6,
+                                      }}
+                                    >
+                                      {areaData.updates.map((upd, i) => (
+                                        <span key={i} style={S.statusBadge}>
+                                          {upd}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
       {/* ── TAB CONTENT 4: USER ACTIVITY LOG ── */}
       {activeTab === "ACTIVITY" && (
         <div>
           <div style={S.subheader}>
             <span style={S.subheaderText}>Global Action Log</span>
-            <span style={S.subheaderNote}>
-              Today's complete timeline (Resets at midnight)
-            </span>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -836,10 +1024,10 @@ export default function AdminScreen({
               </div>
             ) : (
               todaysNotifications.map((notif) => {
-                const isRemoval = notif.message.includes("removed");
+                const isRemoval =
+                  notif.message.includes("removed") ||
+                  notif.message.includes("unsigned");
                 const isCheck = notif.message.includes("signed off");
-
-                // Color codes removals in red, additions in green, checks in neutral blue
                 const borderColor = isRemoval
                   ? "#F87171"
                   : isCheck
@@ -867,7 +1055,6 @@ export default function AdminScreen({
                           style={{
                             fontSize: 14,
                             color: C.text,
-                            lineHeight: 1.4,
                             marginBottom: 6,
                           }}
                         >
@@ -883,26 +1070,10 @@ export default function AdminScreen({
                           {formatFullDateTime(notif.createdAt)}
                         </div>
                       </div>
-
-                      {/* Delete Individual Log Button for Creators */}
                       {isCreator && (
                         <button
                           onClick={() => deleteLogEntry(notif.id)}
-                          style={{
-                            background: "rgba(248,113,113,0.12)",
-                            color: "#F87171",
-                            border: "none",
-                            borderRadius: 8,
-                            width: 32,
-                            height: 32,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            cursor: "pointer",
-                            marginLeft: 12,
-                            flexShrink: 0,
-                          }}
-                          title="Delete Log"
+                          style={S.deleteBtn}
                         >
                           ✕
                         </button>
@@ -916,7 +1087,7 @@ export default function AdminScreen({
         </div>
       )}
 
-      {/* ── SHIFT / ALLOCATION EDIT MODAL ── */}
+      {/* ── MODALS ── */}
       {showMetaEdit && (
         <div style={S.overlay} onClick={() => setShowMetaEdit(false)}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
@@ -929,37 +1100,49 @@ export default function AdminScreen({
                 ✕
               </button>
             </div>
-
             <div style={S.modalDivider} />
-
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>Allocation</div>
               <select
-                className="light-input"
                 style={S.input}
                 value={editAllocation}
-                onChange={(e) => setEditAllocation(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEditAllocation(val);
+                  if (val === "Floor Incharge") setEditShift("Morning");
+                  else if (val === "Shift Incharge") setEditShift("Afternoon");
+                  else if (val === "Housekeeping Desk") setEditShift("Morning");
+                }}
               >
                 <option>Floor Incharge</option>
                 <option>Shift Incharge</option>
                 <option>Housekeeping Desk</option>
               </select>
             </div>
-
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>Shift</div>
               <select
-                className="light-input"
                 style={S.input}
                 value={editShift}
                 onChange={(e) => setEditShift(e.target.value)}
               >
-                <option>Morning</option>
-                <option>Afternoon</option>
-                <option>Night</option>
+                {editAllocation === "Floor Incharge" && (
+                  <option>Morning</option>
+                )}
+                {editAllocation === "Shift Incharge" && (
+                  <>
+                    <option>Afternoon</option>
+                    <option>Night</option>
+                  </>
+                )}
+                {editAllocation === "Housekeeping Desk" && (
+                  <>
+                    <option>Morning</option>
+                    <option>Afternoon</option>
+                  </>
+                )}
               </select>
             </div>
-
             <button
               onClick={saveMetaEdit}
               style={{ ...S.saveBtn, width: "100%", marginTop: "10px" }}
@@ -977,7 +1160,6 @@ export default function AdminScreen({
 const C = {
   bg: "#07101E",
   surface: "#0F1B2D",
-  surfaceHover: "#162236",
   border: "rgba(255,255,255,0.06)",
   borderMid: "rgba(255,255,255,0.10)",
   text: "#F0F4FF",
@@ -993,30 +1175,6 @@ const S = {
     boxSizing: "border-box",
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif",
-    position: "relative",
-  },
-  toastContainer: {
-    position: "fixed",
-    top: 20,
-    left: "50%",
-    transform: "translateX(-50%)",
-    zIndex: 9999,
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    width: "90%",
-    maxWidth: 400,
-    pointerEvents: "none",
-  },
-  toast: {
-    background: "#1A2235",
-    border: `1px solid ${C.gold}`,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-    borderRadius: 12,
-    padding: "12px 16px",
-    fontSize: 13,
-    color: C.text,
-    animation: "fadeIn 0.3s ease",
   },
   header: {
     display: "flex",
@@ -1032,12 +1190,7 @@ const S = {
     color: C.gold,
     marginBottom: 4,
   },
-  userName: {
-    fontSize: 26,
-    fontWeight: 700,
-    letterSpacing: "-0.3px",
-    color: C.text,
-  },
+  userName: { fontSize: 26, fontWeight: 700, color: C.text },
   userMeta: { fontSize: 13, fontWeight: 500, color: C.gold, marginTop: 4 },
   ghostBtn: {
     background: "transparent",
@@ -1047,21 +1200,16 @@ const S = {
     fontSize: 13,
     cursor: "pointer",
     padding: "4px 0",
-    letterSpacing: "0.02em",
   },
   dropdown: {
     position: "absolute",
     right: 0,
     top: 30,
-    width: 150,
+    width: 170,
     background: "#111F35",
     borderRadius: 14,
     border: `1px solid ${C.borderMid}`,
-    overflow: "hidden",
     zIndex: 999,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-    transformOrigin: "top right",
-    animation: "scaleInFade 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   dropItem: {
     padding: "13px 16px",
@@ -1073,7 +1221,6 @@ const S = {
   },
   tabContainer: {
     display: "flex",
-    flexWrap: "wrap",
     gap: 4,
     background: C.surface,
     borderRadius: 12,
@@ -1083,7 +1230,6 @@ const S = {
   },
   tabBtn: {
     flex: 1,
-    minWidth: "65px",
     background: "transparent",
     border: "none",
     padding: "10px 4px",
@@ -1092,13 +1238,8 @@ const S = {
     color: C.muted,
     borderRadius: 8,
     cursor: "pointer",
-    transition: "all 0.2s",
   },
-  tabBtnActive: {
-    background: "#162236",
-    color: C.text,
-    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-  },
+  tabBtnActive: { background: "#162236", color: C.text },
   pillsWrap: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 20 },
   pill: {
     background: C.surface,
@@ -1106,26 +1247,16 @@ const S = {
     borderRadius: 20,
     padding: "6px 14px",
     fontSize: 12,
-    fontWeight: 500,
     color: C.muted,
     cursor: "pointer",
-    letterSpacing: "0.01em",
   },
   pillActive: { background: C.gold, borderColor: C.gold, color: "#000" },
   subheader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: 12,
-    flexWrap: "wrap",
-    gap: 4,
   },
-  subheaderText: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: C.text,
-    letterSpacing: "0.01em",
-  },
+  subheaderText: { fontSize: 13, fontWeight: 600, color: C.text },
   subheaderNote: { fontSize: 11, color: C.muted },
   card: {
     background: C.surface,
@@ -1140,12 +1271,7 @@ const S = {
     alignItems: "center",
   },
   cardLeft: { display: "flex", flexDirection: "column", gap: 3 },
-  cardName: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: C.text,
-    letterSpacing: "-0.1px",
-  },
+  cardName: { fontSize: 15, fontWeight: 600, color: C.text },
   cardSub: { fontSize: 12, color: C.muted },
   cardRight: { display: "flex", alignItems: "center", gap: 10 },
   varChip: {
@@ -1153,7 +1279,6 @@ const S = {
     padding: "3px 9px",
     fontSize: 12,
     fontWeight: 700,
-    letterSpacing: "0.02em",
   },
   qtyBox: {
     background: "#162236",
@@ -1165,13 +1290,9 @@ const S = {
     justifyContent: "center",
     fontSize: 18,
     fontWeight: 700,
-    color: C.text,
     border: `1px solid ${C.border}`,
   },
-  expandPanel: {
-    padding: "0 16px 14px",
-    animation: "expandDown 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-  },
+  expandPanel: { padding: "0 16px 14px" },
   divider: { height: "1px", background: C.border, marginBottom: 10 },
   locRow: {
     display: "flex",
@@ -1188,17 +1309,19 @@ const S = {
     padding: "8px 0",
     textAlign: "center",
   },
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.6)",
-    backdropFilter: "blur(4px)",
-    WebkitBackdropFilter: "blur(4px)",
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    zIndex: 999,
-    animation: "fadeIn 0.3s ease-out",
+  statusAreaCard: {
+    background: "rgba(255, 255, 255, 0.02)",
+    border: `1px solid ${C.border}`,
+    borderRadius: 12,
+    padding: "12px 14px",
+  },
+  statusBadge: {
+    background: "#162236",
+    fontSize: 11,
+    color: "#B0BFDA",
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: `1px solid ${C.border}`,
   },
   modal: {
     background: "#0F1B2D",
@@ -1207,31 +1330,20 @@ const S = {
     width: "100%",
     maxWidth: 480,
     border: `1px solid ${C.borderMid}`,
-    borderBottom: "none",
-    maxHeight: "85vh",
-    overflowY: "auto",
-    animation: "slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
     marginBottom: 16,
   },
   modalEyebrow: {
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: "0.15em",
-    textTransform: "uppercase",
     color: C.gold,
     marginBottom: 4,
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 700,
-    color: C.text,
-    letterSpacing: "-0.3px",
-  },
+  modalTitle: { fontSize: 22, fontWeight: 700, color: C.text },
   closeBtn: {
     background: "rgba(255,255,255,0.06)",
     border: "none",
@@ -1240,36 +1352,14 @@ const S = {
     width: 32,
     height: 32,
     cursor: "pointer",
-    fontSize: 13,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
   },
   modalDivider: { height: "1px", background: C.border, margin: "16px 0" },
   fieldBlock: { marginBottom: 16 },
   fieldLabel: {
     fontSize: 10,
     fontWeight: 600,
-    letterSpacing: "0.12em",
-    textTransform: "uppercase",
     color: C.muted,
     marginBottom: 8,
-  },
-  chipRow: { display: "flex", gap: 8, flexWrap: "wrap" },
-  chip: {
-    background: "#162236",
-    border: `1px solid ${C.border}`,
-    borderRadius: 10,
-    padding: "8px 16px",
-    fontSize: 13,
-    fontWeight: 500,
-    color: C.muted,
-    cursor: "pointer",
-  },
-  chipActive: {
-    background: C.gold,
-    borderColor: C.gold,
-    color: "#000",
   },
   input: {
     width: "100%",
@@ -1280,8 +1370,6 @@ const S = {
     color: C.text,
     fontSize: 15,
     outline: "none",
-    boxSizing: "border-box",
-    fontFamily: "inherit",
     colorScheme: "dark",
   },
   saveBtn: {
@@ -1293,11 +1381,7 @@ const S = {
     fontWeight: 700,
     fontSize: 14,
     cursor: "pointer",
-    fontFamily: "inherit",
-    letterSpacing: "0.02em",
   },
-
-  // ─── NOTIFICATION NEW STYLES ───
   badge: {
     position: "absolute",
     top: -2,
@@ -1308,54 +1392,45 @@ const S = {
     fontWeight: 700,
     borderRadius: 10,
     padding: "2px 5px",
-    minWidth: 14,
-    textAlign: "center",
-    boxSizing: "border-box",
   },
   notificationPanel: {
     position: "fixed",
     right: 16,
     top: 70,
     width: "320px",
-    maxWidth: "calc(100vw - 32px)",
     background: "#111F35",
     borderRadius: 14,
     border: `1px solid ${C.borderMid}`,
-    overflow: "hidden",
     zIndex: 1000,
-    boxShadow: "0 12px 40px rgba(0,0,0,0.8)",
-    display: "flex",
-    flexDirection: "column",
-    maxHeight: "60vh",
-    transformOrigin: "top right",
-    animation: "scaleInFade 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
   },
   notifHeader: {
     padding: "12px 16px",
     fontSize: 13,
     fontWeight: 700,
-    color: C.text,
-    borderBottom: `1px solid ${C.border}`,
     background: "#162236",
-  },
-  notifBody: {
-    overflowY: "auto",
-  },
-  notifItem: {
-    padding: "12px 16px",
     borderBottom: `1px solid ${C.border}`,
+  },
+  notifBody: { overflowY: "auto", maxHeight: "300px" },
+  notifItem: { padding: "12px 16px", borderBottom: `1px solid ${C.border}` },
+  notifMsg: { fontSize: 13, color: "#B0BFDA" },
+  notifTime: { fontSize: 11, color: C.muted },
+  deleteBtn: {
+    background: "rgba(248,113,113,0.12)",
+    color: "#F87171",
+    border: "none",
+    borderRadius: 8,
+    padding: "4px 12px",
+    fontSize: 12,
+    cursor: "pointer",
+  },
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    backdropFilter: "blur(4px)",
     display: "flex",
-    flexDirection: "column",
-    gap: 4,
-    transition: "background 0.2s",
-  },
-  notifMsg: {
-    fontSize: 13,
-    color: "#B0BFDA",
-    lineHeight: 1.4,
-  },
-  notifTime: {
-    fontSize: 11,
-    color: C.muted,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    zIndex: 999,
   },
 };

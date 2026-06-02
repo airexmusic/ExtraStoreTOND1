@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -23,6 +23,16 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [allocation, setAllocation] = useState("Floor Incharge");
   const [shift, setShift] = useState("Morning");
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (allocation === "Floor Incharge") {
+      setShift("Morning");
+    } else if (allocation === "Shift Incharge") {
+      setShift("Afternoon");
+    } else if (allocation === "Housekeeping Desk") {
+      setShift("Morning");
+    }
+  }, [allocation]);
 
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -94,12 +104,23 @@ export default function LoginScreen({ onLoginSuccess }) {
 
           <div style={S.fieldBlock}>
             <div style={S.fieldLabel}>Designation / Allocation</div>
+
             <div style={S.optionGrid}>
               {["Floor Incharge", "Shift Incharge", "Housekeeping Desk"].map(
                 (opt) => (
                   <div
                     key={opt}
-                    onClick={() => setAllocation(opt)}
+                    onClick={() => {
+                      setAllocation(opt);
+
+                      if (opt === "Floor Incharge") {
+                        setShift("Morning");
+                      } else if (opt === "Shift Incharge") {
+                        setShift("Afternoon");
+                      } else if (opt === "Housekeeping Desk") {
+                        setShift("Morning");
+                      }
+                    }}
                     style={{
                       ...S.optionBtn,
                       ...(allocation === opt ? S.optionBtnActive : {}),
@@ -114,10 +135,24 @@ export default function LoginScreen({ onLoginSuccess }) {
 
           <div style={S.fieldBlock}>
             <div style={S.fieldLabel}>Select Shift</div>
+
             <div
-              style={{ ...S.optionGrid, gridTemplateColumns: "repeat(3, 1fr)" }}
+              style={{
+                ...S.optionGrid,
+                gridTemplateColumns:
+                  allocation === "Floor Incharge"
+                    ? "1fr"
+                    : allocation === "Shift Incharge"
+                    ? "repeat(2, 1fr)"
+                    : "repeat(2, 1fr)",
+              }}
             >
-              {["Morning", "Afternoon", "Night"].map((opt) => (
+              {(allocation === "Floor Incharge"
+                ? ["Morning"]
+                : allocation === "Shift Incharge"
+                ? ["Afternoon", "Night"]
+                : ["Morning", "Afternoon"]
+              ).map((opt) => (
                 <div
                   key={opt}
                   onClick={() => setShift(opt)}

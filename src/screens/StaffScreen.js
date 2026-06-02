@@ -104,7 +104,10 @@ export default function StaffDashboard({
 
   const tapTimer = useRef(null);
   const isCreator = user?.role === "CREATOR";
-  const todayStart = new Date().setHours(0, 0, 0, 0);
+
+  // Replace strict midnight with a rolling 12-hour window
+  // This prevents the Night Shift from losing their sign-offs at 12:00 AM
+  const recentLimit = Date.now() - 12 * 60 * 60 * 1000;
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "extra_item_entries"), (snap) => {
@@ -168,7 +171,7 @@ export default function StaffDashboard({
   }
 
   function openModal(itemName) {
-    if (area === "All Areas") return; // no entry from All Areas view
+    if (area === "All Areas") return;
     setModalItem(itemName);
     setStaged([]);
     setLocType(isFloor(area) ? "Pantry" : "None");
@@ -215,17 +218,16 @@ export default function StaffDashboard({
     setSaving(true);
     try {
       for (const e of staged) {
-        // 1. Save the actual inventory entry
         await setDoc(doc(db, "extra_item_entries", makeId()), {
           itemName: modalItem,
           area,
           locLabel: e.locLabel,
           qty: e.qty,
           createdBy: user?.name || "Unknown",
+          shift: user?.shift || "Morning", // Missing shift attached to inventory
           createdAt: Date.now(),
         });
 
-        // 2. Trigger the notification for the Admin dashboard
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} placed ${
             e.qty
@@ -245,10 +247,8 @@ export default function StaffDashboard({
 
   async function removeEntry(id) {
     try {
-      // 1. Find the entry data BEFORE we delete it so we can log it
       const entryToDel = allEntries.find((e) => e.id === id);
 
-      // 2. Write the permanent receipt to the notifications database
       if (entryToDel) {
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} removed ${entryToDel.qty} ${
@@ -260,7 +260,6 @@ export default function StaffDashboard({
         });
       }
 
-      // 3. Actually delete the item from the live inventory
       await deleteDoc(doc(db, "extra_item_entries", id));
     } catch (err) {
       alert("Remove failed: " + err.message);
@@ -269,35 +268,94 @@ export default function StaffDashboard({
 
   // ─── ACCOUNTABILITY SIGN-OFF STATUS LOGIC ───
 
-  // Find if there is already a ghost entry for this area today
+  // FIX: Isolate query to specific shift and rolling 12 hours, AND catch older stuck entries without a shift
   const currentAreaGhostEntries = allEntries.filter(
     (e) =>
       e.area === area &&
       e.itemName === "Status Check" &&
-      e.createdAt >= todayStart
+      (e.shift === user?.shift || !e.shift) &&
+      e.createdAt >= recentLimit
   );
+
   const isAreaSigned = currentAreaGhostEntries.length > 0;
 
   const markAreaChecked = async () => {
     setSaving(true);
-    try {
-      // Save Ghost Entry to trigger Status Tab timestamp update
-      await setDoc(doc(db, "extra_item_entries", makeId()), {
-        itemName: "Status Check",
-        area,
-        locLabel: area,
-        qty: 0,
-        createdBy: user?.name || "Unknown",
-        createdAt: Date.now(),
-      });
 
-      // Save Receipt to User Log
-      await addDoc(collection(db, "notifications"), {
-        message: `${user?.name || "Unknown"} signed off and verified ${area}`,
-        createdBy: user?.name || "Unknown",
-        createdAt: Date.now(),
-        readBy: [],
-      });
+    try {
+      const allocation = user?.allocation || "";
+      const shift = user?.shift || "";
+
+      let areasToSign = [];
+
+      // Shift parsing logic
+      if (allocation === "Shift Incharge" && shift === "Night") {
+        areasToSign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+          "HK Desk",
+          "HK Office",
+          "Compactor",
+        ];
+      } else if (allocation === "Shift Incharge" && shift === "Afternoon") {
+        areasToSign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+        ];
+      } else if (allocation === "Floor Incharge" && shift === "Afternoon") {
+        areasToSign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+        ];
+      } else if (
+        allocation === "Housekeeping Desk" &&
+        (shift === "Morning" || shift === "Afternoon")
+      ) {
+        areasToSign = ["HK Desk", "HK Office", "Compactor"];
+      } else if (allocation === "Floor Incharge" && shift === "Morning") {
+        areasToSign = [area];
+      } else {
+        areasToSign = [area];
+      }
+
+      for (const signArea of areasToSign) {
+        await setDoc(doc(db, "extra_item_entries", makeId()), {
+          itemName: "Status Check",
+          area: signArea,
+          locLabel: signArea,
+          qty: 0,
+          createdBy: user?.name || "Unknown",
+          shift: user?.shift || "Morning", // Attached shift
+          createdAt: Date.now(),
+        });
+
+        await addDoc(collection(db, "notifications"), {
+          message: `${
+            user?.name || "Unknown"
+          } signed off and verified ${signArea}`,
+          createdBy: user?.name || "Unknown",
+          createdAt: Date.now(),
+          readBy: [],
+        });
+      }
 
       setCheckSuccess(true);
       setTimeout(() => setCheckSuccess(false), 3000);
@@ -309,18 +367,80 @@ export default function StaffDashboard({
   };
 
   const unsignArea = async () => {
+    const confirmUnsign = window.confirm(
+      `Remove current shift verification for ${area}?`
+    );
+
+    if (!confirmUnsign) return;
+
     setSaving(true);
+
     try {
-      // Delete all ghost entries for this area from today
-      for (const entry of currentAreaGhostEntries) {
+      const allocation = user?.allocation || "";
+      const shift = user?.shift || "";
+
+      let areasToUnsign = [];
+
+      if (allocation === "Shift Incharge" && shift === "Night") {
+        areasToUnsign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+          "HK Desk",
+          "HK Office",
+          "Compactor",
+        ];
+      } else if (allocation === "Shift Incharge" && shift === "Afternoon") {
+        areasToUnsign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+        ];
+      } else if (allocation === "Floor Incharge" && shift === "Afternoon") {
+        areasToUnsign = [
+          "Floor 1",
+          "Floor 2",
+          "Floor 3",
+          "Floor 4",
+          "Floor 5",
+          "Floor 6",
+          "Floor 7",
+          "Floor 8",
+        ];
+      } else if (
+        allocation === "Housekeeping Desk" &&
+        (shift === "Morning" || shift === "Afternoon")
+      ) {
+        areasToUnsign = ["HK Desk", "HK Office", "Compactor"];
+      } else {
+        areasToUnsign = [area];
+      }
+
+      // FIX: Includes `|| !e.shift` to allow you to delete old stuck entries from before the update
+      const entriesToDelete = allEntries.filter(
+        (e) =>
+          e.itemName === "Status Check" &&
+          areasToUnsign.includes(e.area) &&
+          (e.shift === user?.shift || !e.shift) &&
+          e.createdAt >= recentLimit
+      );
+
+      for (const entry of entriesToDelete) {
         await deleteDoc(doc(db, "extra_item_entries", entry.id));
       }
 
-      // Log the unsign action
       await addDoc(collection(db, "notifications"), {
-        message: `${
-          user?.name || "Unknown"
-        } removed verification (unsigned) for ${area}`,
+        message: `${user?.name || "Unknown"} removed verification`,
         createdBy: user?.name || "Unknown",
         createdAt: Date.now(),
         readBy: [],
@@ -387,22 +507,50 @@ export default function StaffDashboard({
             </button>
             {showRoleMenu && (
               <div style={S.dropdown}>
-                {[
-                  ["ADMIN", "Admin"],
-                  ["STAFF", "Staff"],
-                  ...(isCreator ? [["PAR_CONTROL", "PAR Control"]] : []),
-                ].map(([k, l]) => (
-                  <div
-                    key={k}
-                    onClick={() => {
-                      onSwitchRole(k);
-                      setShowRoleMenu(false);
-                    }}
-                    style={S.dropItem}
-                  >
-                    {l}
-                  </div>
-                ))}
+                <div
+                  onClick={() => {
+                    onSwitchRole("ADMIN");
+                    setShowRoleMenu(false);
+                  }}
+                  style={S.dropItem}
+                >
+                  Admin Dashboard
+                </div>
+                <div
+                  onClick={() => {
+                    onSwitchRole("STAFF");
+                    setShowRoleMenu(false);
+                  }}
+                  style={S.dropItem}
+                >
+                  Staff Dashboard
+                </div>
+                {isCreator && (
+                  <>
+                    <div
+                      onClick={() => {
+                        onSwitchRole("PAR_CONTROL");
+                        setShowRoleMenu(false);
+                      }}
+                      style={S.dropItem}
+                    >
+                      PAR Control
+                    </div>
+                    <div
+                      onClick={() => {
+                        onSwitchRole("USER_MGMT");
+                        setShowRoleMenu(false);
+                      }}
+                      style={{
+                        ...S.dropItem,
+                        borderTop: `1px solid ${C.border}`,
+                        color: C.gold,
+                      }}
+                    >
+                      Manage Users
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -540,7 +688,34 @@ export default function StaffDashboard({
             </button>
           ) : (
             <button
-              onClick={markAreaChecked}
+              onClick={() => {
+                const allocation = user?.allocation || "";
+                const shift = user?.shift || "";
+
+                let signText = area;
+
+                if (allocation === "Shift Incharge" && shift === "Night") {
+                  signText = "Floor 1-8, HK Desk, HK Office and Compactor";
+                } else if (
+                  (allocation === "Shift Incharge" && shift === "Afternoon") ||
+                  (allocation === "Floor Incharge" && shift === "Afternoon")
+                ) {
+                  signText = "Floor 1-8";
+                } else if (
+                  allocation === "Housekeeping Desk" &&
+                  (shift === "Morning" || shift === "Afternoon")
+                ) {
+                  signText = "HK Desk, HK Office and Compactor";
+                }
+
+                const confirmed = window.confirm(
+                  `SIGN VERIFICATION\n\nYou are about to verify:\n\n${signText}\n\nContinue?`
+                );
+
+                if (confirmed) {
+                  markAreaChecked();
+                }
+              }}
               disabled={saving || checkSuccess}
               style={{
                 ...S.saveBtn,
@@ -733,7 +908,18 @@ export default function StaffDashboard({
                 className="light-input"
                 style={S.input}
                 value={editAllocation}
-                onChange={(e) => setEditAllocation(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setEditAllocation(value);
+
+                  if (value === "Floor Incharge") {
+                    setEditShift("Morning");
+                  } else if (value === "Shift Incharge") {
+                    setEditShift("Afternoon");
+                  } else if (value === "Housekeeping Desk") {
+                    setEditShift("Morning");
+                  }
+                }}
               >
                 <option>Floor Incharge</option>
                 <option>Shift Incharge</option>
@@ -749,9 +935,23 @@ export default function StaffDashboard({
                 value={editShift}
                 onChange={(e) => setEditShift(e.target.value)}
               >
-                <option>Morning</option>
-                <option>Afternoon</option>
-                <option>Night</option>
+                {editAllocation === "Floor Incharge" && (
+                  <option>Morning</option>
+                )}
+
+                {editAllocation === "Shift Incharge" && (
+                  <>
+                    <option>Afternoon</option>
+                    <option>Night</option>
+                  </>
+                )}
+
+                {editAllocation === "Housekeeping Desk" && (
+                  <>
+                    <option>Morning</option>
+                    <option>Afternoon</option>
+                  </>
+                )}
               </select>
             </div>
 

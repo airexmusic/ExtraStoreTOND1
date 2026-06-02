@@ -4,6 +4,10 @@ import LoginScreen from "./screens/LoginScreen";
 import StaffDashboard from "./screens/StaffScreen";
 import AdminScreen from "./screens/AdminScreen";
 import ParControlScreen from "./screens/ParControlScreen";
+import UserManagementScreen from "./screens/UserManagementScreen"; // 1. Added Import
+import { auth, db } from "./firebase"; // 2. Added Firebase imports
+import { doc, setDoc } from "firebase/firestore";
+import { signOut } from "firebase/auth";
 import "./styles.css";
 
 export default function App() {
@@ -30,7 +34,8 @@ export default function App() {
     return "SPLASH";
   });
 
-  const handleLoginSuccess = (role, name, allocation, shift) => {
+  // 3. Updated Login to automatically sync users to Firestore
+  const handleLoginSuccess = async (role, name, allocation, shift) => {
     const userData = {
       name,
       role,
@@ -39,8 +44,25 @@ export default function App() {
     };
 
     setUserDetails(userData);
-    // Save to memory for persistence
     localStorage.setItem("tondSession", JSON.stringify(userData));
+
+    // ⚡ MIRROR USER TO FIRESTORE ⚡
+    try {
+      if (auth.currentUser) {
+        await setDoc(
+          doc(db, "users", auth.currentUser.uid),
+          {
+            name: name || "Unknown",
+            email: auth.currentUser.email || "No Email",
+            role: role || "STAFF",
+            lastLogin: Date.now(),
+          },
+          { merge: true } // Merge true prevents overwriting if they already exist
+        );
+      }
+    } catch (err) {
+      console.error("Failed to mirror user:", err);
+    }
 
     // Creator gets dashboard picker
     if (role === "CREATOR") {
@@ -63,10 +85,8 @@ export default function App() {
     // Clear from memory
     localStorage.removeItem("tondSession");
 
-    // Clear Firebase Auth session
-    import("firebase/auth").then(({ signOut }) => {
-      import("./firebase").then(({ auth }) => signOut(auth));
-    });
+    // Clear Firebase Auth session (Cleaned up to use static imports)
+    signOut(auth).catch((err) => console.error("Logout Error:", err));
 
     setCurrentScreen("LOGIN");
   };
@@ -175,6 +195,11 @@ export default function App() {
                 screen: "PAR_CONTROL",
                 icon: "📋",
               },
+              {
+                label: "User Management",
+                screen: "USER_MGMT",
+                icon: "👥",
+              }, // 4. Added button here
             ].map((item) => (
               <div
                 key={item.screen}
@@ -263,6 +288,17 @@ export default function App() {
           user={userDetails}
           onLogout={handleLogout}
           onSwitchRole={handleSwitchRole}
+        />
+      )}
+
+      {/* 5. Render new screen when selected */}
+      {currentScreen === "USER_MGMT" && userDetails.role === "CREATOR" && (
+        <UserManagementScreen
+          user={userDetails}
+          onLogout={handleLogout}
+          onSwitchRole={handleSwitchRole}
+          onUpdateMeta={handleUpdateMeta}
+          onBack={() => setCurrentScreen("CREATOR_PICKER")}
         />
       )}
     </div>

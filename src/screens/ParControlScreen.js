@@ -32,7 +32,8 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
   const [deploying, setDeploying] = useState(false);
   const [deploySuccess, setDeploySuccess] = useState(false);
 
-  const isCreator = user?.allocation === "Creator";
+  // Robust check to ensure Creator status is captured properly
+  const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
 
   // FETCH LATEST DEPLOYMENT ON LOAD
   useEffect(() => {
@@ -126,9 +127,9 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
               {showRoleMenu && (
                 <div style={S.dropdown}>
                   {[
-                    ["ADMIN", "Admin"],
+                    ["ADMIN", "Admin Dashboard"],
+                    ["STAFF", "Staff Dashboard"],
                     ["PAR_CONTROL", "PAR Control"],
-                    ["STAFF", "Staff"],
                   ].map(([k, l]) => (
                     <div
                       key={k}
@@ -141,6 +142,21 @@ export default function ParControlScreen({ user, onLogout, onSwitchRole }) {
                       {l}
                     </div>
                   ))}
+
+                  {/* Manage Users visible only to Creator */}
+                  <div
+                    onClick={() => {
+                      onSwitchRole("USER_MGMT");
+                      setShowRoleMenu(false);
+                    }}
+                    style={{
+                      ...S.dropItem,
+                      borderTop: `1px solid ${C.border}`,
+                      color: C.gold,
+                    }}
+                  >
+                    Manage Users
+                  </div>
                 </div>
               )}
             </div>
