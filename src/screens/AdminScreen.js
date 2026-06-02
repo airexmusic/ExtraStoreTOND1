@@ -102,11 +102,9 @@ export default function AdminScreen({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  // Check creator via role OR allocation to be fully safe
   const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
   const initialLoadDone = useRef(false);
 
-  // The timestamp for exactly 12:00 AM today
   const todayStart = new Date().setHours(0, 0, 0, 0);
 
   // 1. Fetch live updates for toasts and actual item entries
@@ -118,9 +116,12 @@ export default function AdminScreen({
           const notifId = Date.now() + Math.random();
           let msg = "";
 
-          if (change.type === "added") {
+          if (change.type === "added" && data.itemName !== "Status Check") {
             msg = `${data.itemName} placed in ${data.locLabel} (Qty: ${data.qty}) by ${data.createdBy}`;
-          } else if (change.type === "removed") {
+          } else if (
+            change.type === "removed" &&
+            data.itemName !== "Status Check"
+          ) {
             msg = `${data.itemName} removed from ${data.locLabel} (Qty: ${data.qty}) by ${data.createdBy}`;
           }
 
@@ -147,7 +148,7 @@ export default function AdminScreen({
     const q = query(
       collection(db, "notifications"),
       orderBy("createdAt", "desc"),
-      limit(200) // Deep history
+      limit(200)
     );
     const unsub = onSnapshot(q, (snap) => {
       setNotifications(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
@@ -182,8 +183,6 @@ export default function AdminScreen({
     return () => unsub();
   }, []);
 
-  // ── FILTER FOR TODAY ONLY ──
-  // This reads the permanent log, but filters out anything before midnight today.
   const todaysNotifications = notifications.filter(
     (n) => n.createdAt >= todayStart
   );
@@ -210,7 +209,6 @@ export default function AdminScreen({
     }
   };
 
-  // Delete Individual Log Entry Function (Creator Only)
   const deleteLogEntry = async (id) => {
     if (!isCreator) return;
     const confirmDelete = window.confirm(
@@ -250,7 +248,6 @@ export default function AdminScreen({
     return map;
   }
 
-  // ── EXPORT INVENTORY AUDIT REPORT ──
   const exportCSV = () => {
     if (!startDate || !endDate) {
       alert("Please select both a start and end date.");
@@ -310,7 +307,6 @@ export default function AdminScreen({
     document.body.removeChild(link);
   };
 
-  // ── EXPORT HISTORICAL USER ACTIVITY LOG (Creator Only) ──
   const exportActivityReport = async () => {
     if (!isCreator) return;
     if (!startDate || !endDate) {
@@ -322,7 +318,6 @@ export default function AdminScreen({
     const end = new Date(endDate).setHours(23, 59, 59, 999);
 
     try {
-      // Direct query to Firebase so it can pull thousands of records if needed without crashing
       const q = query(
         collection(db, "notifications"),
         where("createdAt", ">=", start),
@@ -336,7 +331,7 @@ export default function AdminScreen({
         return;
       }
 
-      let csvContent = "\uFEFF"; // BOM for Excel
+      let csvContent = "\uFEFF";
       csvContent += "Date,Time,Action Details\n";
 
       snap.docs.forEach((docSnap) => {
@@ -350,7 +345,6 @@ export default function AdminScreen({
           minute: "2-digit",
         });
 
-        // Escape quotes to prevent formatting breaks in Excel
         const safeMsg = notif.message.replace(/"/g, '""');
 
         csvContent += `"${dateStr}","${timeStr}","${safeMsg}"\n`;
@@ -372,16 +366,25 @@ export default function AdminScreen({
     }
   };
 
+  // ─── FIXED: IGNORE ORPHANED DATA IN STATUS TAB ───
   const getAreaActivity = (areaName) => {
     const areaEntries = allEntries.filter(
-      (e) => e.area === areaName && e.createdAt >= todayStart
+      (e) =>
+        e.area === areaName &&
+        e.createdAt >= todayStart &&
+        // ONLY allow items that are currently in the Master List, or valid Status Checks
+        (displayItems.includes(e.itemName) || e.itemName === "Status Check")
     );
+
     if (areaEntries.length === 0) return null;
     const latest = areaEntries[0];
-    const updates = areaEntries.map(
-      (e) => `${e.itemName} (${e.locLabel}: ${e.qty})`
-    );
+
+    const updates = areaEntries.map((e) => {
+      if (e.itemName === "Status Check") return "Verified & Signed Off";
+      return `${e.itemName} (${e.locLabel}: ${e.qty})`;
+    });
     const uniqueUpdates = [...new Set(updates)];
+
     return {
       latestUser: latest.createdBy,
       time: latest.createdAt,
@@ -834,14 +837,21 @@ export default function AdminScreen({
             ) : (
               todaysNotifications.map((notif) => {
                 const isRemoval = notif.message.includes("removed");
+                const isCheck = notif.message.includes("signed off");
+
+                // Color codes removals in red, additions in green, checks in neutral blue
+                const borderColor = isRemoval
+                  ? "#F87171"
+                  : isCheck
+                  ? "#3B7EF6"
+                  : "#34D399";
+
                 return (
                   <div
                     key={notif.id}
                     style={{
                       ...S.card,
-                      borderLeft: `4px solid ${
-                        isRemoval ? "#F87171" : "#34D399"
-                      }`,
+                      borderLeft: `4px solid ${borderColor}`,
                     }}
                   >
                     <div
@@ -1244,6 +1254,22 @@ const S = {
     textTransform: "uppercase",
     color: C.muted,
     marginBottom: 8,
+  },
+  chipRow: { display: "flex", gap: 8, flexWrap: "wrap" },
+  chip: {
+    background: "#162236",
+    border: `1px solid ${C.border}`,
+    borderRadius: 10,
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: 500,
+    color: C.muted,
+    cursor: "pointer",
+  },
+  chipActive: {
+    background: C.gold,
+    borderColor: C.gold,
+    color: "#000",
   },
   input: {
     width: "100%",
