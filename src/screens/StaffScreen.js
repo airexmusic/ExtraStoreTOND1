@@ -12,7 +12,7 @@ import {
   limit,
 } from "firebase/firestore";
 
-// ─── CATALOG ──────────────────────────────────────────────────────────────────
+// ─── CATALOG & CONSTANTS ──────────────────────────────────────────────────────
 const FALLBACK_ITEMS = [
   "Child Bed",
   "Extension Board",
@@ -69,6 +69,76 @@ function buildLocLabel(locType, pantry, room) {
   return "Landing";
 }
 
+// ─── PREMIUM AUDIO CHIME (Native Browser Synthesis) ─────────────────────────
+const playPremiumChime = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc1.connect(gainNode);
+    osc2.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    // Creates a pleasant, hotel-style bell sound (A5 + C#6 chord)
+    osc1.type = "sine";
+    osc2.type = "sine";
+    osc1.frequency.setValueAtTime(880, ctx.currentTime);
+    osc2.frequency.setValueAtTime(1108.73, ctx.currentTime);
+
+    gainNode.gain.setValueAtTime(0, ctx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.5);
+
+    osc1.start(ctx.currentTime);
+    osc2.start(ctx.currentTime);
+    osc1.stop(ctx.currentTime + 2.5);
+    osc2.stop(ctx.currentTime + 2.5);
+  } catch (e) {
+    console.warn("Audio autoplay blocked by browser policies.", e);
+  }
+};
+
+// ─── ACCOUNTABILITY CHECKER ──────────────────────────────────────────────────
+const checkAccountability = (user, allEntries, recentLimit) => {
+  const shift = user?.shift;
+  if (!shift) return false;
+
+  const now = new Date();
+  const time = now.getHours() + now.getMinutes() / 60;
+
+  let isAlertTime = false;
+
+  // STRICT TIME BOXING: Alerts only show during a specific window for that shift
+  if (shift === "Morning") {
+    // 4:30 PM (16.5) to 7:00 PM (19.0)
+    isAlertTime = time >= 16.5 && time < 19.0;
+  } else if (shift === "Afternoon") {
+    // 10:30 PM (22.5) to 1:00 AM (1.0)
+    isAlertTime = time >= 22.5 || time < 1.0;
+  } else if (shift === "Night") {
+    // 7:00 AM (7.0) to 9:30 AM (9.5)
+    isAlertTime = time >= 7.0 && time < 9.5;
+  }
+
+  // If outside the active alert window, hide the banner entirely
+  if (!isAlertTime) return false;
+
+  // Has THIS user submitted ANY Status Check for THIS shift recently?
+  const hasSigned = allEntries.some(
+    (e) =>
+      e.itemName === "Status Check" &&
+      e.shift === shift &&
+      e.createdBy === user?.name &&
+      e.createdAt >= recentLimit
+  );
+
+  return !hasSigned;
+};
+
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function StaffDashboard({
   user,
@@ -91,23 +161,56 @@ export default function StaffDashboard({
   const [editAllocation, setEditAllocation] = useState("");
   const [editShift, setEditShift] = useState("");
 
-  // modal fields
+  // Modal fields
   const [locType, setLocType] = useState("Pantry");
   const [pantry, setPantry] = useState("A");
   const [room, setRoom] = useState("");
   const [qty, setQty] = useState("");
   const [staged, setStaged] = useState([]);
   const [saving, setSaving] = useState(false);
-
-  // Status Check Success State
   const [checkSuccess, setCheckSuccess] = useState(false);
 
+  const [, setTick] = useState(0);
   const tapTimer = useRef(null);
-  const isCreator = user?.role === "CREATOR";
+  const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
 
-  // Replace strict midnight with a rolling 12-hour window
-  // This prevents the Night Shift from losing their sign-offs at 12:00 AM
+  // Use a rolling 12-hour window
   const recentLimit = Date.now() - 12 * 60 * 60 * 1000;
+
+  // Ask for Push Notification Permission on mount
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Ticker for real-time clock evaluation (Updates every 60s)
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Global Check: Show banner based strictly on time and user sign-off status
+  const showBanner = checkAccountability(user, allEntries, recentLimit);
+
+  // 10-Minute Escalation Timer (Chime + Push Notification)
+  useEffect(() => {
+    let escalateTimer;
+    if (showBanner) {
+      // 600000 ms = 10 minutes
+      escalateTimer = setTimeout(() => {
+        playPremiumChime();
+
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification("Shift Sign-off Required", {
+            body: "Your shift ends soon. Please verify and save your area status.",
+            icon: "https://cdn-icons-png.flaticon.com/512/564/564276.png"
+          });
+        }
+      }, 600000); 
+    }
+    return () => clearTimeout(escalateTimer);
+  }, [showBanner]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "extra_item_entries"), (snap) => {
@@ -224,7 +327,7 @@ export default function StaffDashboard({
           locLabel: e.locLabel,
           qty: e.qty,
           createdBy: user?.name || "Unknown",
-          shift: user?.shift || "Morning", // Missing shift attached to inventory
+          shift: user?.shift || "Unknown",
           createdAt: Date.now(),
         });
 
@@ -233,6 +336,7 @@ export default function StaffDashboard({
             e.qty
           } ${modalItem} in ${area} (${e.locLabel})`,
           createdBy: user?.name || "Unknown",
+          shift: user?.shift || "Unknown",
           createdAt: Date.now(),
           readBy: [],
         });
@@ -255,6 +359,7 @@ export default function StaffDashboard({
             entryToDel.itemName
           } from ${entryToDel.area} (${entryToDel.locLabel})`,
           createdBy: user?.name || "Unknown",
+          shift: user?.shift || "Unknown",
           createdAt: Date.now(),
           readBy: [],
         });
@@ -268,7 +373,6 @@ export default function StaffDashboard({
 
   // ─── ACCOUNTABILITY SIGN-OFF STATUS LOGIC ───
 
-  // FIX: Isolate query to specific shift and rolling 12 hours, AND catch older stuck entries without a shift
   const currentAreaGhostEntries = allEntries.filter(
     (e) =>
       e.area === area &&
@@ -288,7 +392,6 @@ export default function StaffDashboard({
 
       let areasToSign = [];
 
-      // Shift parsing logic
       if (allocation === "Shift Incharge" && shift === "Night") {
         areasToSign = [
           "Floor 1",
@@ -343,7 +446,7 @@ export default function StaffDashboard({
           locLabel: signArea,
           qty: 0,
           createdBy: user?.name || "Unknown",
-          shift: user?.shift || "Morning", // Attached shift
+          shift: user?.shift || "Unknown",
           createdAt: Date.now(),
         });
 
@@ -352,6 +455,7 @@ export default function StaffDashboard({
             user?.name || "Unknown"
           } signed off and verified ${signArea}`,
           createdBy: user?.name || "Unknown",
+          shift: user?.shift || "Unknown",
           createdAt: Date.now(),
           readBy: [],
         });
@@ -426,7 +530,6 @@ export default function StaffDashboard({
         areasToUnsign = [area];
       }
 
-      // FIX: Includes `|| !e.shift` to allow you to delete old stuck entries from before the update
       const entriesToDelete = allEntries.filter(
         (e) =>
           e.itemName === "Status Check" &&
@@ -442,6 +545,7 @@ export default function StaffDashboard({
       await addDoc(collection(db, "notifications"), {
         message: `${user?.name || "Unknown"} removed verification`,
         createdBy: user?.name || "Unknown",
+        shift: user?.shift || "Unknown",
         createdAt: Date.now(),
         readBy: [],
       });
@@ -468,6 +572,66 @@ export default function StaffDashboard({
 
   return (
     <div style={S.root}>
+      {/* ── CSS Animations for Premium iOS Glassmorphism UI ── */}
+      <style>{`
+        @keyframes iosSlideIn {
+          0% { opacity: 0; transform: translateY(-30px) scale(0.95); }
+          60% { transform: translateY(5px) scale(1.02); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes subtleGlow {
+          0% { box-shadow: 0 8px 32px rgba(255, 59, 48, 0.15); border-color: rgba(255, 100, 100, 0.15); }
+          50% { box-shadow: 0 8px 40px rgba(255, 59, 48, 0.4); border-color: rgba(255, 100, 100, 0.4); }
+          100% { box-shadow: 0 8px 32px rgba(255, 59, 48, 0.15); border-color: rgba(255, 100, 100, 0.15); }
+        }
+        .ios-glass-alert {
+          background: linear-gradient(135deg, rgba(255, 59, 48, 0.15) 0%, rgba(255, 59, 48, 0.05) 100%);
+          backdrop-filter: blur(24px) saturate(180%);
+          -webkit-backdrop-filter: blur(24px) saturate(180%);
+          border: 1px solid rgba(255, 100, 100, 0.3);
+          border-top: 1px solid rgba(255, 150, 150, 0.4); 
+          border-radius: 20px;
+          padding: 16px 20px;
+          margin-bottom: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          animation: iosSlideIn 0.8s cubic-bezier(0.16, 1, 0.3, 1), subtleGlow 3s infinite ease-in-out;
+        }
+        .ios-icon-glow {
+          background: linear-gradient(135deg, rgba(255, 59, 48, 0.6), rgba(255, 59, 48, 0.2));
+          box-shadow: 0 4px 15px rgba(255, 59, 48, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 50%;
+          width: 46px;
+          height: 46px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 22px;
+          flex-shrink: 0;
+        }
+      `}</style>
+
+      {/* ── PREMIUM ACCOUNTABILITY BANNER ── */}
+      {showBanner && (
+        <div className="ios-glass-alert">
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div className="ios-icon-glow">
+              ⚠️
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "0.01em", color: "#FFF" }}>
+                Shift Sign-Off Required
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", marginTop: 4, lineHeight: 1.4 }}>
+                Please verify and save your area status below to complete your accountability.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── HEADER ── */}
       <div style={S.header}>
         <div>
@@ -507,49 +671,52 @@ export default function StaffDashboard({
             </button>
             {showRoleMenu && (
               <div style={S.dropdown}>
+                {/* 1. Admin Dashboard Option */}
                 <div
                   onClick={() => {
-                    onSwitchRole("ADMIN");
+                    onSwitchRole("ADMIN"); 
                     setShowRoleMenu(false);
                   }}
                   style={S.dropItem}
                 >
                   Admin Dashboard
                 </div>
+
+                {/* 2. Staff Dashboard Option */}
                 <div
                   onClick={() => {
-                    onSwitchRole("STAFF");
+                    onSwitchRole("STAFF"); 
                     setShowRoleMenu(false);
                   }}
                   style={S.dropItem}
                 >
                   Staff Dashboard
                 </div>
+
+                {/* 3. PAR Control Option (Creator Only) */}
                 {isCreator && (
-                  <>
-                    <div
-                      onClick={() => {
-                        onSwitchRole("PAR_CONTROL");
-                        setShowRoleMenu(false);
-                      }}
-                      style={S.dropItem}
-                    >
-                      PAR Control
-                    </div>
-                    <div
-                      onClick={() => {
-                        onSwitchRole("USER_MGMT");
-                        setShowRoleMenu(false);
-                      }}
-                      style={{
-                        ...S.dropItem,
-                        borderTop: `1px solid ${C.border}`,
-                        color: C.gold,
-                      }}
-                    >
-                      Manage Users
-                    </div>
-                  </>
+                  <div
+                    onClick={() => {
+                      onSwitchRole("PAR_CONTROL");
+                      setShowRoleMenu(false);
+                    }}
+                    style={S.dropItem}
+                  >
+                    PAR Control
+                  </div>
+                )}
+                
+                {/* 4. User Management Option (Creator Only) */}
+                {isCreator && (
+                  <div
+                    onClick={() => {
+                      onSwitchRole("USER_MGMT"); 
+                      setShowRoleMenu(false);
+                    }}
+                    style={{ ...S.dropItem, borderTop: `1px solid ${C.border}`, color: C.gold }}
+                  >
+                    Manage Users
+                  </div>
                 )}
               </div>
             )}

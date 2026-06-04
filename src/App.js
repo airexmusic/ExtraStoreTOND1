@@ -4,8 +4,9 @@ import LoginScreen from "./screens/LoginScreen";
 import StaffDashboard from "./screens/StaffScreen";
 import AdminScreen from "./screens/AdminScreen";
 import ParControlScreen from "./screens/ParControlScreen";
-import UserManagementScreen from "./screens/UserManagementScreen"; // 1. Added Import
-import { auth, db } from "./firebase"; // 2. Added Firebase imports
+import UserManagementScreen from "./screens/UserManagementScreen";
+import ProfileScreen from "./screens/ProfileScreen"; // 1. Added Profile Import
+import { auth, db } from "./firebase";
 import { doc, setDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import "./styles.css";
@@ -199,7 +200,7 @@ export default function App() {
                 label: "User Management",
                 screen: "USER_MGMT",
                 icon: "👥",
-              }, // 4. Added button here
+              },
             ].map((item) => (
               <div
                 key={item.screen}
@@ -291,7 +292,6 @@ export default function App() {
         />
       )}
 
-      {/* 5. Render new screen when selected */}
       {currentScreen === "USER_MGMT" && userDetails.role === "CREATOR" && (
         <UserManagementScreen
           user={userDetails}
@@ -299,6 +299,14 @@ export default function App() {
           onSwitchRole={handleSwitchRole}
           onUpdateMeta={handleUpdateMeta}
           onBack={() => setCurrentScreen("CREATOR_PICKER")}
+        />
+      )}
+
+      {/* 2. Added Profile Screen Route */}
+      {currentScreen === "PROFILE" && (
+        <ProfileScreen 
+          user={userDetails} 
+          onBack={() => setCurrentScreen(userDetails.role === "CREATOR" ? "ADMIN" : "STAFF")} 
         />
       )}
     </div>
