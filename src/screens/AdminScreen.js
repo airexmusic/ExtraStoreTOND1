@@ -104,7 +104,7 @@ const playDing = () => {
     gainNode.connect(ctx.destination);
 
     osc.type = "sine";
-    osc.frequency.setValueAtTime(1046.5, ctx.currentTime); // High C
+    osc.frequency.setValueAtTime(1046.5, ctx.currentTime); 
 
     gainNode.gain.setValueAtTime(0, ctx.currentTime);
     gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
@@ -159,13 +159,22 @@ export default function AdminScreen({ user, onLogout, onSwitchRole, onUpdateMeta
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  // ─── DATE NAVIGATOR STATES ───
   const [statusDate, setStatusDate] = useState(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
   });
 
-  const dateInputRef = useRef(null); // Used to pop the native calendar
+  const [activityDate, setActivityDate] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+
+  const dateInputRef = useRef(null); 
+  const activityDateInputRef = useRef(null); 
+
   const isCreator = user?.role === "CREATOR" || user?.allocation === "Creator";
   const initialLoadDone = useRef(false);
   const initialNotifLoadDone = useRef(false);
@@ -271,7 +280,7 @@ export default function AdminScreen({ user, onLogout, onSwitchRole, onUpdateMeta
     return () => unsub();
   }, []);
 
-  // ─── DATE NAVIGATION LOGIC ───
+  // ─── STATUS TAB DATE NAVIGATION LOGIC ───
   const isToday = () => {
     const today = new Date();
     return (
@@ -280,38 +289,36 @@ export default function AdminScreen({ user, onLogout, onSwitchRole, onUpdateMeta
       statusDate.getDate() === today.getDate()
     );
   };
+  const handlePrevDay = () => { const d = new Date(statusDate); d.setDate(d.getDate() - 1); setStatusDate(d); };
+  const handleNextDay = () => { if (isToday()) return; const d = new Date(statusDate); d.setDate(d.getDate() + 1); setStatusDate(d); };
+  const handleDateChange = (e) => { if (!e.target.value) return; const [y, m, d] = e.target.value.split("-"); setStatusDate(new Date(y, m - 1, d)); };
+  const handleOpenCalendar = () => { try { if (dateInputRef.current && dateInputRef.current.showPicker) dateInputRef.current.showPicker(); } catch (e) {} };
 
-  const handlePrevDay = () => {
-    const d = new Date(statusDate);
-    d.setDate(d.getDate() - 1);
-    setStatusDate(d);
+  // ─── ACTIVITY TAB DATE NAVIGATION LOGIC ───
+  const isActivityToday = () => {
+    const today = new Date();
+    return (
+      activityDate.getFullYear() === today.getFullYear() &&
+      activityDate.getMonth() === today.getMonth() &&
+      activityDate.getDate() === today.getDate()
+    );
   };
+  const handleActivityPrevDay = () => { const d = new Date(activityDate); d.setDate(d.getDate() - 1); setActivityDate(d); };
+  const handleActivityNextDay = () => { if (isActivityToday()) return; const d = new Date(activityDate); d.setDate(d.getDate() + 1); setActivityDate(d); };
+  const handleActivityDateChange = (e) => { if (!e.target.value) return; const [y, m, d] = e.target.value.split("-"); setActivityDate(new Date(y, m - 1, d)); };
+  const handleOpenActivityCalendar = () => { try { if (activityDateInputRef.current && activityDateInputRef.current.showPicker) activityDateInputRef.current.showPicker(); } catch (e) {} };
 
-  const handleNextDay = () => {
-    if (isToday()) return;
-    const d = new Date(statusDate);
-    d.setDate(d.getDate() + 1);
-    setStatusDate(d);
-  };
-
-  const handleDateChange = (e) => {
-    if (!e.target.value) return;
-    const [y, m, d] = e.target.value.split("-");
-    setStatusDate(new Date(y, m - 1, d));
-  };
-
-  const handleOpenCalendar = () => {
-    try {
-      if (dateInputRef.current && dateInputRef.current.showPicker) {
-        dateInputRef.current.showPicker();
-      }
-    } catch (e) {
-      console.log("showPicker not supported in this browser fallback used.");
-    }
-  };
-
+  // ─── NOTIFICATION FILTERING ───
+  // 1. Live Bell Notifications (Rolling 12 Hours)
   const todaysNotifications = notifications.filter((n) => n.createdAt >= recentLimit);
   const unreadCount = todaysNotifications.filter((n) => !n.readBy?.includes(user?.name)).length;
+
+  // 2. Activity Tab Notifications (Strictly based on selected date)
+  const viewedNotifications = notifications.filter((n) => {
+    const startOfDay = new Date(activityDate.getFullYear(), activityDate.getMonth(), activityDate.getDate()).getTime();
+    const endOfDay = startOfDay + 24 * 3600 * 1000;
+    return n.createdAt >= startOfDay && n.createdAt < endOfDay;
+  });
 
   const handleToggleNotifications = () => {
     setShowNotifications((prev) => !prev);
@@ -641,16 +648,13 @@ export default function AdminScreen({ user, onLogout, onSwitchRole, onUpdateMeta
 
         return (
           <div>
-            {/* ── CALENDAR OVERLAY DATE NAVIGATOR ── */}
+            {/* ── STATUS DATE NAVIGATOR ── */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, background: "linear-gradient(145deg, #111F35 0%, #0F1B2D 100%)", padding: "12px 20px", borderRadius: 20, border: `1px solid ${C.borderMid}`, boxShadow: "0 8px 24px rgba(0,0,0,0.3)" }}>
                <button onClick={handlePrevDay} style={{ background: "rgba(255,255,255,0.05)", border: "none", color: C.gold, fontSize: 24, width: 40, height: 40, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s", zIndex: 20 }}>
                  ‹
                </button>
                
-               <div 
-                 onClick={handleOpenCalendar} 
-                 style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", position: "relative", padding: "0 20px", flex: 1 }}
-               >
+               <div onClick={handleOpenCalendar} style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", position: "relative", padding: "0 20px", flex: 1 }}>
                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: C.muted, textTransform: "uppercase", marginBottom: 4 }}>
                    Viewing Status For
                  </span>
@@ -715,12 +719,43 @@ export default function AdminScreen({ user, onLogout, onSwitchRole, onUpdateMeta
 
       {activeTab === "ACTIVITY" && (
         <div>
-          <div style={S.subheader}><span style={S.subheaderText}>Global Action Log</span></div>
+          {/* ── ACTIVITY DATE NAVIGATOR ── */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, background: "linear-gradient(145deg, #111F35 0%, #0F1B2D 100%)", padding: "12px 20px", borderRadius: 20, border: `1px solid ${C.borderMid}`, boxShadow: "0 8px 24px rgba(0,0,0,0.3)" }}>
+             <button onClick={handleActivityPrevDay} style={{ background: "rgba(255,255,255,0.05)", border: "none", color: C.gold, fontSize: 24, width: 40, height: 40, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s", zIndex: 20 }}>
+               ‹
+             </button>
+             
+             <div onClick={handleOpenActivityCalendar} style={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", position: "relative", padding: "0 20px", flex: 1 }}>
+               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.15em", color: C.muted, textTransform: "uppercase", marginBottom: 4 }}>
+                 Viewing Activity For
+               </span>
+               <span style={{ fontSize: 16, fontWeight: 600, color: C.text, letterSpacing: "0.5px" }}>
+                 {activityDate.toLocaleDateString("en-US", { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+               </span>
+               <input 
+                 ref={activityDateInputRef}
+                 type="date"
+                 max={new Date().toISOString().split("T")[0]}
+                 value={`${activityDate.getFullYear()}-${String(activityDate.getMonth() + 1).padStart(2, "0")}-${String(activityDate.getDate()).padStart(2, "0")}`}
+                 onChange={handleActivityDateChange}
+                 className="native-date-picker"
+               />
+             </div>
+
+             <button 
+               onClick={handleActivityNextDay} 
+               style={{ background: isActivityToday() ? "transparent" : "rgba(255,255,255,0.05)", border: "none", color: isActivityToday() ? C.border : C.gold, fontSize: 24, width: 40, height: 40, borderRadius: "50%", cursor: isActivityToday() ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s", zIndex: 20 }}
+               disabled={isActivityToday()}
+             >
+               ›
+             </button>
+          </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {todaysNotifications.length === 0 ? (
-              <div style={S.card}><div style={{ padding: "20px", textAlign: "center", color: C.muted, fontSize: 13 }}>No actions have been logged today.</div></div>
+            {viewedNotifications.length === 0 ? (
+              <div style={S.card}><div style={{ padding: "20px", textAlign: "center", color: C.muted, fontSize: 13 }}>No actions logged for this date.</div></div>
             ) : (
-              todaysNotifications.map((notif) => {
+              viewedNotifications.map((notif) => {
                 const isRemoval = notif.message.includes("removed") || notif.message.includes("unsigned");
                 const isCheck = notif.message.includes("signed off");
                 const borderColor = isRemoval ? "#F87171" : isCheck ? "#3B7EF6" : "#34D399";
