@@ -9,6 +9,11 @@ import {
 } from "firebase/auth";
 import { auth } from "../firebase";
 
+const ALL_FLOORS = [
+  "Floor 1", "Floor 2", "Floor 3", "Floor 4",
+  "Floor 5", "Floor 6", "Floor 7", "Floor 8"
+];
+
 export default function LoginScreen({ onLoginSuccess }) {
   const [view, setView] = useState("login"); // "login", "register", "handover"
   const [identifier, setIdentifier] = useState("");
@@ -22,6 +27,7 @@ export default function LoginScreen({ onLoginSuccess }) {
   // Handover state
   const [allocation, setAllocation] = useState("Floor Incharge");
   const [shift, setShift] = useState("Morning");
+  const [selectedFloors, setSelectedFloors] = useState([]); // NEW: Multi-select array
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -32,6 +38,10 @@ export default function LoginScreen({ onLoginSuccess }) {
     } else if (allocation === "Housekeeping Desk") {
       setShift("Morning");
     }
+    // Clear floors if they change allocation away from Floor Incharge
+    if (allocation !== "Floor Incharge") {
+      setSelectedFloors([]);
+    }
   }, [allocation]);
 
   const handleAuth = async (e) => {
@@ -41,7 +51,8 @@ export default function LoginScreen({ onLoginSuccess }) {
     // 1. CREATOR BACKDOOR
     if (identifier.toLowerCase() === "rahulsengupta" && password === "1234") {
       setIsLoading(false);
-      onLoginSuccess("CREATOR", "Rahul Sengupta", "Creator", "Creator");
+      // Added empty array at the end for floors
+      onLoginSuccess("CREATOR", "Rahul Sengupta", "Creator", "Creator", []);
       return;
     }
 
@@ -87,6 +98,15 @@ export default function LoginScreen({ onLoginSuccess }) {
     setView("login");
   };
 
+  // Toggle selection for multiple floors
+  const handleFloorToggle = (floor) => {
+    setSelectedFloors((prev) =>
+      prev.includes(floor)
+        ? prev.filter((f) => f !== floor) // Remove if already selected
+        : [...prev, floor]                // Add if not selected
+    );
+  };
+
   // ─── HANDOVER VIEW (PREMIUM FLUID UI) ─────────────────────────────────────
   if (view === "handover") {
     return (
@@ -110,17 +130,7 @@ export default function LoginScreen({ onLoginSuccess }) {
                 (opt) => (
                   <div
                     key={opt}
-                    onClick={() => {
-                      setAllocation(opt);
-
-                      if (opt === "Floor Incharge") {
-                        setShift("Morning");
-                      } else if (opt === "Shift Incharge") {
-                        setShift("Afternoon");
-                      } else if (opt === "Housekeeping Desk") {
-                        setShift("Morning");
-                      }
-                    }}
+                    onClick={() => setAllocation(opt)}
                     style={{
                       ...S.optionBtn,
                       ...(allocation === opt ? S.optionBtnActive : {}),
@@ -167,16 +177,48 @@ export default function LoginScreen({ onLoginSuccess }) {
             </div>
           </div>
 
+          {/* ── NEW: MULTI-SELECT FLOORS ── */}
+          {allocation === "Floor Incharge" && (
+            <div style={S.fieldBlock}>
+              <div style={S.fieldLabel}>Assigned Floors (Multi-Select)</div>
+              <div style={{ ...S.optionGrid, gridTemplateColumns: "repeat(2, 1fr)" }}>
+                {ALL_FLOORS.map((floor) => {
+                  const isActive = selectedFloors.includes(floor);
+                  return (
+                    <div
+                      key={floor}
+                      onClick={() => handleFloorToggle(floor)}
+                      style={{
+                        ...S.optionBtn,
+                        ...(isActive ? S.optionBtnActive : {}),
+                      }}
+                    >
+                      {floor}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <button
             style={{ ...S.btn, marginTop: 24 }}
             onClick={() => {
-              const finalAllocation =
-                role === "CREATOR" ? "Creator" : allocation;
+              // Validation: Must pick at least one floor if Floor Incharge
+              if (allocation === "Floor Incharge" && selectedFloors.length === 0) {
+                alert("Please select at least one floor before entering the dashboard.");
+                return;
+              }
+
+              const finalAllocation = role === "CREATOR" ? "Creator" : allocation;
+              
+              // Pass the array along with standard args
               onLoginSuccess(
                 role,
                 username || identifier,
                 finalAllocation,
-                shift
+                shift,
+                allocation === "Floor Incharge" ? selectedFloors : []
               );
             }}
           >
@@ -405,7 +447,6 @@ const S = {
     fontFamily: "inherit",
     transition: "border-color 0.2s",
   },
-  // ─── NEW CHECKBOX STYLES ───
   checkboxWrap: {
     display: "flex",
     alignItems: "center",

@@ -5,27 +5,20 @@ import StaffDashboard from "./screens/StaffScreen";
 import AdminScreen from "./screens/AdminScreen";
 import ParControlScreen from "./screens/ParControlScreen";
 import UserManagementScreen from "./screens/UserManagementScreen";
-import ProfileScreen from "./screens/ProfileScreen"; // 1. Added Profile Import
+import ProfileScreen from "./screens/ProfileScreen";
 import { auth, db } from "./firebase";
 import { doc, setDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import "./styles.css";
 
 export default function App() {
-  // 1. Initialize user details from localStorage if they exist
   const [userDetails, setUserDetails] = useState(() => {
     const savedUser = localStorage.getItem("tondSession");
     return savedUser
       ? JSON.parse(savedUser)
-      : {
-          name: "",
-          role: "",
-          allocation: "",
-          shift: "",
-        };
+      : { name: "", role: "", allocation: "", shift: "" };
   });
 
-  // 2. Auto-route to the correct screen on refresh if a session exists
   const [currentScreen, setCurrentScreen] = useState(() => {
     const savedUser = localStorage.getItem("tondSession");
     if (savedUser) {
@@ -35,19 +28,11 @@ export default function App() {
     return "SPLASH";
   });
 
-  // 3. Updated Login to automatically sync users to Firestore
   const handleLoginSuccess = async (role, name, allocation, shift) => {
-    const userData = {
-      name,
-      role,
-      allocation,
-      shift,
-    };
-
+    const userData = { name, role, allocation, shift };
     setUserDetails(userData);
     localStorage.setItem("tondSession", JSON.stringify(userData));
 
-    // ⚡ MIRROR USER TO FIRESTORE ⚡
     try {
       if (auth.currentUser) {
         await setDoc(
@@ -58,60 +43,33 @@ export default function App() {
             role: role || "STAFF",
             lastLogin: Date.now(),
           },
-          { merge: true } // Merge true prevents overwriting if they already exist
+          { merge: true }
         );
       }
     } catch (err) {
       console.error("Failed to mirror user:", err);
     }
 
-    // Creator gets dashboard picker
-    if (role === "CREATOR") {
-      setCurrentScreen("CREATOR_PICKER");
-      return;
-    }
-
-    // Everyone else goes to Staff Dashboard
-    setCurrentScreen("STAFF");
+    setCurrentScreen(role === "CREATOR" ? "CREATOR_PICKER" : "STAFF");
   };
 
   const handleLogout = () => {
-    setUserDetails({
-      name: "",
-      role: "",
-      allocation: "",
-      shift: "",
-    });
-
-    // Clear from memory
+    setUserDetails({ name: "", role: "", allocation: "", shift: "" });
     localStorage.removeItem("tondSession");
-
-    // Clear Firebase Auth session (Cleaned up to use static imports)
     signOut(auth).catch((err) => console.error("Logout Error:", err));
-
     setCurrentScreen("LOGIN");
   };
 
   const handleUpdateMeta = (allocation, shift) => {
     setUserDetails((prev) => {
-      const updated = {
-        ...prev,
-        allocation,
-        shift,
-      };
-      // Keep localStorage updated if they change shift mid-session
+      const updated = { ...prev, allocation, shift };
       localStorage.setItem("tondSession", JSON.stringify(updated));
       return updated;
     });
   };
 
-  const handleSwitchRole = (screen) => {
-    setCurrentScreen(screen);
-  };
+  const handleSwitchRole = (screen) => setCurrentScreen(screen);
 
-  // ─────────────────────────────────────────────
-  // CREATOR DASHBOARD PICKER
-  // ─────────────────────────────────────────────
   if (currentScreen === "CREATOR_PICKER") {
     return (
       <div
@@ -122,8 +80,7 @@ export default function App() {
           alignItems: "center",
           justifyContent: "center",
           padding: "20px",
-          fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          fontFamily: "-apple-system, sans-serif",
         }}
       >
         <div
@@ -150,7 +107,6 @@ export default function App() {
           >
             Creator Access
           </div>
-
           <h2
             style={{
               margin: 0,
@@ -162,45 +118,17 @@ export default function App() {
           >
             Select Dashboard
           </h2>
-
-          <p
-            style={{
-              fontSize: 14,
-              color: "#6B7A99",
-              marginBottom: 32,
-            }}
-          >
+          <p style={{ fontSize: 14, color: "#6B7A99", marginBottom: 32 }}>
             Welcome, {userDetails.name}
           </p>
-
           <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-            }}
+            style={{ display: "flex", flexDirection: "column", gap: "12px" }}
           >
             {[
-              {
-                label: "Staff Dashboard",
-                screen: "STAFF",
-                icon: "🧹",
-              },
-              {
-                label: "Admin Dashboard",
-                screen: "ADMIN",
-                icon: "🛡️",
-              },
-              {
-                label: "PAR Control",
-                screen: "PAR_CONTROL",
-                icon: "📋",
-              },
-              {
-                label: "User Management",
-                screen: "USER_MGMT",
-                icon: "👥",
-              },
+              { label: "Staff Dashboard", screen: "STAFF", icon: "🧹" },
+              { label: "Admin Dashboard", screen: "ADMIN", icon: "🛡️" },
+              { label: "PAR Control", screen: "PAR_CONTROL", icon: "📋" },
+              { label: "User Management", screen: "USER_MGMT", icon: "👥" },
             ].map((item) => (
               <div
                 key={item.screen}
@@ -217,20 +145,14 @@ export default function App() {
                 }}
               >
                 <span style={{ fontSize: 24 }}>{item.icon}</span>
-
                 <span
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 600,
-                    color: "#F0F4FF",
-                  }}
+                  style={{ fontSize: 15, fontWeight: 600, color: "#F0F4FF" }}
                 >
                   {item.label}
                 </span>
               </div>
             ))}
           </div>
-
           <button
             onClick={handleLogout}
             style={{
@@ -255,17 +177,11 @@ export default function App() {
   return (
     <div className="app-container">
       {currentScreen === "SPLASH" && (
-        <SplashScreen
-          onFinish={() => {
-            setCurrentScreen("LOGIN");
-          }}
-        />
+        <SplashScreen onFinish={() => setCurrentScreen("LOGIN")} />
       )}
-
       {currentScreen === "LOGIN" && (
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
       )}
-
       {currentScreen === "STAFF" && (
         <StaffDashboard
           user={userDetails}
@@ -274,7 +190,6 @@ export default function App() {
           onUpdateMeta={handleUpdateMeta}
         />
       )}
-
       {currentScreen === "ADMIN" && (
         <AdminScreen
           user={userDetails}
@@ -283,7 +198,6 @@ export default function App() {
           onUpdateMeta={handleUpdateMeta}
         />
       )}
-
       {currentScreen === "PAR_CONTROL" && userDetails.role === "CREATOR" && (
         <ParControlScreen
           user={userDetails}
@@ -291,7 +205,6 @@ export default function App() {
           onSwitchRole={handleSwitchRole}
         />
       )}
-
       {currentScreen === "USER_MGMT" && userDetails.role === "CREATOR" && (
         <UserManagementScreen
           user={userDetails}
@@ -302,11 +215,14 @@ export default function App() {
         />
       )}
 
-      {/* 2. Added Profile Screen Route */}
       {currentScreen === "PROFILE" && (
-        <ProfileScreen 
-          user={userDetails} 
-          onBack={() => setCurrentScreen(userDetails.role === "CREATOR" ? "ADMIN" : "STAFF")} 
+        <ProfileScreen
+          user={userDetails}
+          onBack={() =>
+            setCurrentScreen(
+              userDetails.role === "CREATOR" ? "CREATOR_PICKER" : "STAFF"
+            )
+          }
         />
       )}
     </div>
