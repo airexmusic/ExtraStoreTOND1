@@ -7,57 +7,63 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
 } from "firebase/auth";
-import { auth } from "../firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
 const ALL_FLOORS = [
-  "Floor 1", "Floor 2", "Floor 3", "Floor 4",
-  "Floor 5", "Floor 6", "Floor 7", "Floor 8"
+  "Floor 1",
+  "Floor 2",
+  "Floor 3",
+  "Floor 4",
+  "Floor 5",
+  "Floor 6",
+  "Floor 7",
+  "Floor 8",
 ];
 
 export default function LoginScreen({ onLoginSuccess }) {
-  const [view, setView] = useState("login"); // "login", "register", "handover"
+  const [view, setView] = useState("login");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [role, setRole] = useState("Associate");
 
-  // New Remember Me State
   const [rememberMe, setRememberMe] = useState(true);
 
-  // Handover state
   const [allocation, setAllocation] = useState("Floor Incharge");
   const [shift, setShift] = useState("Morning");
-  const [selectedFloors, setSelectedFloors] = useState([]); // NEW: Multi-select array
+  const [selectedFloors, setSelectedFloors] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (allocation === "Floor Incharge") {
-      setShift("Morning");
-    } else if (allocation === "Shift Incharge") {
-      setShift("Afternoon");
-    } else if (allocation === "Housekeeping Desk") {
-      setShift("Morning");
-    }
-    // Clear floors if they change allocation away from Floor Incharge
-    if (allocation !== "Floor Incharge") {
-      setSelectedFloors([]);
-    }
+    if (allocation === "Floor Incharge") setShift("Morning");
+    else if (allocation === "Shift Incharge") setShift("Afternoon");
+    else if (allocation === "Housekeeping Desk") setShift("Morning");
+
+    if (allocation !== "Floor Incharge") setSelectedFloors([]);
   }, [allocation]);
 
   const handleAuth = async (e) => {
     e.preventDefault();
     setIsLoading(true);
 
+    const parsedId = identifier.trim().toLowerCase();
+
     // 1. CREATOR BACKDOOR
-    if (identifier.toLowerCase() === "rahulsengupta" && password === "1234") {
+    if (
+      (parsedId === "rahulsengupta" || parsedId === "rahulsengupta@tond.com") &&
+      password === "1234"
+    ) {
       setIsLoading(false);
-      // Added empty array at the end for floors
       onLoginSuccess("CREATOR", "Rahul Sengupta", "Creator", "Creator", []);
       return;
     }
 
     // 2. TEST BACKDOOR
-    if (identifier.toLowerCase() === "test" && password === "test") {
+    if (
+      (parsedId === "test" || parsedId === "test@tond.com") &&
+      password === "test"
+    ) {
       setIsLoading(false);
       setRole("STAFF");
       setUsername("Test User");
@@ -65,13 +71,9 @@ export default function LoginScreen({ onLoginSuccess }) {
       return;
     }
 
-    // 3. STANDARD LOGIN
+    // 3. STANDARD LOGIN / REGISTER
     try {
-      const email = identifier.includes("@")
-        ? identifier
-        : `${identifier}@tond.com`;
-
-      // Apply the chosen persistence before authenticating
+      const email = parsedId.includes("@") ? parsedId : `${parsedId}@tond.com`;
       const persistenceType = rememberMe
         ? browserLocalPersistence
         : browserSessionPersistence;
@@ -80,7 +82,25 @@ export default function LoginScreen({ onLoginSuccess }) {
       if (view === "register") {
         await createUserWithEmailAndPassword(auth, email, password);
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCred = await signInWithEmailAndPassword(
+          auth,
+          email,
+          password
+        );
+
+        // Check if user is Deactivated
+        const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
+        if (userDoc.exists()) {
+          if (userDoc.data().status === "Suspended") {
+            await signOut(auth);
+            setIsLoading(false);
+            alert("Account Deactivated: Please contact an administrator.");
+            return;
+          }
+          // Pull their REAL name from DB so it doesn't get overwritten by their email
+          setUsername(userDoc.data().name || parsedId);
+          setRole(userDoc.data().role || "STAFF");
+        }
       }
       setIsLoading(false);
       setView("handover");
@@ -91,23 +111,16 @@ export default function LoginScreen({ onLoginSuccess }) {
   };
 
   const handleGoBack = () => {
-    // If backing out of handover, clear the firebase auth session just in case
-    if (view === "handover") {
-      signOut(auth).catch(() => {});
-    }
+    if (view === "handover") signOut(auth).catch(() => {});
     setView("login");
   };
 
-  // Toggle selection for multiple floors
   const handleFloorToggle = (floor) => {
     setSelectedFloors((prev) =>
-      prev.includes(floor)
-        ? prev.filter((f) => f !== floor) // Remove if already selected
-        : [...prev, floor]                // Add if not selected
+      prev.includes(floor) ? prev.filter((f) => f !== floor) : [...prev, floor]
     );
   };
 
-  // ─── HANDOVER VIEW (PREMIUM FLUID UI) ─────────────────────────────────────
   if (view === "handover") {
     return (
       <div style={S.root}>
@@ -115,7 +128,6 @@ export default function LoginScreen({ onLoginSuccess }) {
           <button style={S.backBtn} onClick={handleGoBack}>
             ← Back
           </button>
-
           <div style={{ textAlign: "center", marginBottom: 32 }}>
             <div style={S.eyebrow}>Authentication Success</div>
             <h2 style={S.title}>Shift Handover</h2>
@@ -124,7 +136,6 @@ export default function LoginScreen({ onLoginSuccess }) {
 
           <div style={S.fieldBlock}>
             <div style={S.fieldLabel}>Designation / Allocation</div>
-
             <div style={S.optionGrid}>
               {["Floor Incharge", "Shift Incharge", "Housekeeping Desk"].map(
                 (opt) => (
@@ -145,16 +156,11 @@ export default function LoginScreen({ onLoginSuccess }) {
 
           <div style={S.fieldBlock}>
             <div style={S.fieldLabel}>Select Shift</div>
-
             <div
               style={{
                 ...S.optionGrid,
                 gridTemplateColumns:
-                  allocation === "Floor Incharge"
-                    ? "1fr"
-                    : allocation === "Shift Incharge"
-                    ? "repeat(2, 1fr)"
-                    : "repeat(2, 1fr)",
+                  allocation === "Floor Incharge" ? "1fr" : "repeat(2, 1fr)",
               }}
             >
               {(allocation === "Floor Incharge"
@@ -177,11 +183,15 @@ export default function LoginScreen({ onLoginSuccess }) {
             </div>
           </div>
 
-          {/* ── NEW: MULTI-SELECT FLOORS ── */}
           {allocation === "Floor Incharge" && (
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>Assigned Floors (Multi-Select)</div>
-              <div style={{ ...S.optionGrid, gridTemplateColumns: "repeat(2, 1fr)" }}>
+              <div
+                style={{
+                  ...S.optionGrid,
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                }}
+              >
                 {ALL_FLOORS.map((floor) => {
                   const isActive = selectedFloors.includes(floor);
                   return (
@@ -204,15 +214,17 @@ export default function LoginScreen({ onLoginSuccess }) {
           <button
             style={{ ...S.btn, marginTop: 24 }}
             onClick={() => {
-              // Validation: Must pick at least one floor if Floor Incharge
-              if (allocation === "Floor Incharge" && selectedFloors.length === 0) {
-                alert("Please select at least one floor before entering the dashboard.");
+              if (
+                allocation === "Floor Incharge" &&
+                selectedFloors.length === 0
+              ) {
+                alert(
+                  "Please select at least one floor before entering the dashboard."
+                );
                 return;
               }
-
-              const finalAllocation = role === "CREATOR" ? "Creator" : allocation;
-              
-              // Pass the array along with standard args
+              const finalAllocation =
+                role === "CREATOR" ? "Creator" : allocation;
               onLoginSuccess(
                 role,
                 username || identifier,
@@ -229,11 +241,9 @@ export default function LoginScreen({ onLoginSuccess }) {
     );
   }
 
-  // ─── LOGIN / REGISTER VIEW ────────────────────────────────────────────────
   return (
     <div style={S.root}>
       <div style={S.card}>
-        {/* Dynamic Back Button for Register Screen */}
         {view === "register" && (
           <button style={S.backBtn} onClick={handleGoBack}>
             ← Back
@@ -252,10 +262,12 @@ export default function LoginScreen({ onLoginSuccess }) {
           onSubmit={handleAuth}
           style={{ display: "flex", flexDirection: "column", gap: 16 }}
         >
-          {view === "register" && (
+          {view === "register" ? (
             <>
+              {/* STRICT REGISTER VIEW */}
               <input
                 style={S.input}
+                type="text"
                 placeholder="Full Name"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -276,25 +288,44 @@ export default function LoginScreen({ onLoginSuccess }) {
                   </div>
                 ))}
               </div>
+              <input
+                style={S.input}
+                type="email"
+                placeholder="Email Address"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                required
+              />
+              <input
+                style={S.input}
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </>
+          ) : (
+            <>
+              {/* STRICT LOGIN VIEW */}
+              <input
+                style={S.input}
+                type="text"
+                placeholder="Name or Email"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                required
+              />
+              <input
+                style={S.input}
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
             </>
           )}
-
-          <input
-            style={S.input}
-            type="text"
-            placeholder="User ID or Email"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            required
-          />
-          <input
-            style={S.input}
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
 
           <label style={S.checkboxWrap}>
             <input
@@ -331,7 +362,6 @@ export default function LoginScreen({ onLoginSuccess }) {
   );
 }
 
-// ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const C = {
   bg: "#07101E",
   surface: "#0F1B2D",
@@ -340,7 +370,6 @@ const C = {
   muted: "#6B7A99",
   gold: "#D4AF37",
 };
-
 const S = {
   root: {
     minHeight: "100vh",
@@ -393,14 +422,8 @@ const S = {
     color: C.text,
     marginBottom: 6,
   },
-  subtitle: {
-    margin: 0,
-    fontSize: 14,
-    color: C.muted,
-  },
-  fieldBlock: {
-    marginBottom: 24,
-  },
+  subtitle: { margin: 0, fontSize: 14, color: C.muted },
+  fieldBlock: { marginBottom: 24 },
   fieldLabel: {
     fontSize: 11,
     fontWeight: 600,
@@ -429,7 +452,7 @@ const S = {
     userSelect: "none",
   },
   optionBtnActive: {
-    background: "rgba(212, 175, 55, 0.15)", // Subtle gold glow
+    background: "rgba(212, 175, 55, 0.15)",
     borderColor: C.gold,
     color: C.gold,
     boxShadow: "0 4px 12px rgba(212, 175, 55, 0.1)",

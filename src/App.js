@@ -16,7 +16,7 @@ export default function App() {
     const savedUser = localStorage.getItem("tondSession");
     return savedUser
       ? JSON.parse(savedUser)
-      : { name: "", role: "", allocation: "", shift: "" };
+      : { name: "", role: "", allocation: "", shift: "", selectedFloors: [] }; // Added selectedFloors
   });
 
   const [currentScreen, setCurrentScreen] = useState(() => {
@@ -28,8 +28,15 @@ export default function App() {
     return "SPLASH";
   });
 
-  const handleLoginSuccess = async (role, name, allocation, shift) => {
-    const userData = { name, role, allocation, shift };
+  // Updated to accept selectedFloors
+  const handleLoginSuccess = async (
+    role,
+    name,
+    allocation,
+    shift,
+    selectedFloors = []
+  ) => {
+    const userData = { name, role, allocation, shift, selectedFloors };
     setUserDetails(userData);
     localStorage.setItem("tondSession", JSON.stringify(userData));
 
@@ -42,6 +49,9 @@ export default function App() {
             email: auth.currentUser.email || "No Email",
             role: role || "STAFF",
             lastLogin: Date.now(),
+            currentAllocation: allocation,
+            currentShift: shift,
+            assignedFloors: selectedFloors, // Mirrors to Firebase identity
           },
           { merge: true }
         );
@@ -54,15 +64,26 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    setUserDetails({ name: "", role: "", allocation: "", shift: "" });
+    setUserDetails({
+      name: "",
+      role: "",
+      allocation: "",
+      shift: "",
+      selectedFloors: [],
+    });
     localStorage.removeItem("tondSession");
     signOut(auth).catch((err) => console.error("Logout Error:", err));
     setCurrentScreen("LOGIN");
   };
 
-  const handleUpdateMeta = (allocation, shift) => {
+  // Updated to capture selectedFloors from the Staff Dashboard modal
+  const handleUpdateMeta = (
+    allocation,
+    shift,
+    selectedFloors = userDetails.selectedFloors
+  ) => {
     setUserDetails((prev) => {
-      const updated = { ...prev, allocation, shift };
+      const updated = { ...prev, allocation, shift, selectedFloors };
       localStorage.setItem("tondSession", JSON.stringify(updated));
       return updated;
     });

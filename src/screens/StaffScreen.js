@@ -69,35 +69,29 @@ function buildLocLabel(locType, pantry, room) {
   return "Landing";
 }
 
-// ─── PREMIUM AUDIO CHIME (Native Browser Synthesis) ─────────────────────────
-const playPremiumChime = () => {
+// ─── AUDIO CHIME (Quick 1-Second Ding) ─────────────────────────
+const playDing = () => {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return;
     const ctx = new AudioContext();
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
+    const osc = ctx.createOscillator();
     const gainNode = ctx.createGain();
 
-    osc1.connect(gainNode);
-    osc2.connect(gainNode);
+    osc.connect(gainNode);
     gainNode.connect(ctx.destination);
 
-    osc1.type = "sine";
-    osc2.type = "sine";
-    osc1.frequency.setValueAtTime(880, ctx.currentTime);
-    osc2.frequency.setValueAtTime(1108.73, ctx.currentTime);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(1046.5, ctx.currentTime); // High C
 
     gainNode.gain.setValueAtTime(0, ctx.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.5);
+    gainNode.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.0);
 
-    osc1.start(ctx.currentTime);
-    osc2.start(ctx.currentTime);
-    osc1.stop(ctx.currentTime + 2.5);
-    osc2.stop(ctx.currentTime + 2.5);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 1.0);
   } catch (e) {
-    console.warn("Audio autoplay blocked by browser policies.", e);
+    console.warn("Audio failed", e);
   }
 };
 
@@ -112,6 +106,7 @@ const getAccountabilityAlert = (user, allEntries, recentLimit) => {
   let isShiftInAlertTime = false;
   let isShiftOutAlertTime = false;
 
+  // STRICT TIME BOXING
   if (shift === "Morning") {
     isShiftInAlertTime = time >= 7.5 && time < 10.0;
     isShiftOutAlertTime = time >= 16.5 && time < 19.0;
@@ -164,6 +159,15 @@ export default function StaffDashboard({
   const [displayItems, setDisplayItems] = useState(FALLBACK_ITEMS);
   const [parValues, setParValues] = useState(DEFAULT_PAR);
 
+  // Daily Configuration Overlay (Shift In) States
+  const [shiftInAllocation, setShiftInAllocation] = useState(
+    user?.allocation || "Floor Incharge"
+  );
+  const [shiftInShift, setShiftInShift] = useState(user?.shift || "Morning");
+  const [shiftInFloors, setShiftInFloors] = useState(
+    user?.selectedFloors || []
+  );
+
   const [showMetaEdit, setShowMetaEdit] = useState(false);
   const [editAllocation, setEditAllocation] = useState("");
   const [editShift, setEditShift] = useState("");
@@ -200,7 +204,7 @@ export default function StaffDashboard({
     let escalateTimer;
     if (alertType) {
       escalateTimer = setTimeout(() => {
-        playPremiumChime();
+        playDing();
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification(
             alertType === "SHIFT_IN"
@@ -209,9 +213,8 @@ export default function StaffDashboard({
             {
               body:
                 alertType === "SHIFT_IN"
-                  ? "Please tap 'Shift In' to start your session."
+                  ? "Please tap 'Start Shift' to begin your session."
                   : "Your shift ends soon. Please verify and Shift Out.",
-              icon: "https://cdn-icons-png.flaticon.com/512/564/564276.png",
             }
           );
         }
@@ -246,9 +249,7 @@ export default function StaffDashboard({
             names.push(i.name);
           });
           setParValues((p) => ({ ...p, ...map }));
-          if (names.length > 0) {
-            setDisplayItems(names);
-          }
+          if (names.length > 0) setDisplayItems(names);
         }
       }
     });
@@ -278,16 +279,14 @@ export default function StaffDashboard({
 
     if (allocation === "Floor Incharge" && shift === "Morning") {
       if (selected.length > 0) return ["All Areas", ...selected];
-      return ["All Areas", ...Array.from(FLOOR_AREAS)]; // Fallback if no floors selected
+      return ["All Areas", ...Array.from(FLOOR_AREAS)];
     }
 
-    return AREAS; // Fallback
+    return AREAS;
   }, [user]);
 
   useEffect(() => {
-    if (!visibleAreas.includes(area)) {
-      setArea("All Areas");
-    }
+    if (!visibleAreas.includes(area)) setArea("All Areas");
   }, [visibleAreas, area]);
 
   // ─── SHIFT IN LOGIC & OVERLAY ───
@@ -299,34 +298,63 @@ export default function StaffDashboard({
       e.createdAt >= recentLimit
   );
 
-  const getTargetAreas = () => {
-    const allocation = user?.allocation || "";
-    const shift = user?.shift || "";
-    const selected = user?.selectedFloors || [];
-
-    if (allocation === "Shift Incharge" && shift === "Night") {
-      return [...Array.from(FLOOR_AREAS), "HK Desk", "HK Office", "Compactor"];
-    } else if (
-      (allocation === "Shift Incharge" || allocation === "Floor Incharge") &&
-      shift === "Afternoon"
-    ) {
-      return Array.from(FLOOR_AREAS);
-    } else if (allocation === "Housekeeping Desk") {
-      return ["HK Desk", "HK Office", "Compactor"];
-    } else if (
-      allocation === "Floor Incharge" &&
-      shift === "Morning" &&
-      selected.length > 0
-    ) {
-      return selected;
-    }
-    return [area];
+  const handleShiftInToggleFloor = (floor) => {
+    setShiftInFloors((prev) =>
+      prev.includes(floor) ? prev.filter((f) => f !== floor) : [...prev, floor]
+    );
   };
 
   const handleShiftIn = async () => {
+    if (
+      shiftInAllocation === "Floor Incharge" &&
+      shiftInShift === "Morning" &&
+      shiftInFloors.length === 0
+    ) {
+      alert("Please assign at least one floor before starting your shift.");
+      return;
+    }
+
     setSaving(true);
+
+    // Sync App.js immediately with new popup choices
+    if (onUpdateMeta) {
+      onUpdateMeta(
+        shiftInAllocation,
+        shiftInShift,
+        shiftInAllocation === "Floor Incharge" && shiftInShift === "Morning"
+          ? shiftInFloors
+          : []
+      );
+    }
+
     try {
-      const targetAreas = getTargetAreas();
+      let targetAreas = [];
+      if (shiftInAllocation === "Shift Incharge" && shiftInShift === "Night") {
+        targetAreas = [
+          ...Array.from(FLOOR_AREAS),
+          "HK Desk",
+          "HK Office",
+          "Compactor",
+        ];
+      } else if (
+        (shiftInAllocation === "Shift Incharge" ||
+          shiftInAllocation === "Floor Incharge") &&
+        shiftInShift === "Afternoon"
+      ) {
+        targetAreas = Array.from(FLOOR_AREAS);
+      } else if (shiftInAllocation === "Housekeeping Desk") {
+        targetAreas = ["HK Desk", "HK Office", "Compactor"];
+      } else if (
+        shiftInAllocation === "Floor Incharge" &&
+        shiftInShift === "Morning" &&
+        shiftInFloors.length > 0
+      ) {
+        targetAreas = shiftInFloors;
+      } else {
+        targetAreas = [area];
+      }
+
+      // Simultaneously write Shift In status for all selected areas
       for (const signArea of targetAreas) {
         await setDoc(doc(db, "extra_item_entries", makeId()), {
           itemName: "Shift In",
@@ -334,20 +362,21 @@ export default function StaffDashboard({
           locLabel: signArea,
           qty: 0,
           createdBy: user?.name || "Unknown",
-          shift: user?.shift || "Unknown",
+          shift: shiftInShift || "Unknown",
           createdAt: Date.now(),
         });
       }
+
       await addDoc(collection(db, "notifications"), {
         message: `${
           user?.name || "Unknown"
         } started shift in ${targetAreas.join(", ")}`,
         createdBy: user?.name || "Unknown",
-        shift: user?.shift || "Unknown",
+        shift: shiftInShift || "Unknown",
         createdAt: Date.now(),
         readBy: [],
       });
-      playPremiumChime();
+      playDing();
     } catch (err) {
       alert("Shift In failed: " + err.message);
     } finally {
@@ -437,7 +466,6 @@ export default function StaffDashboard({
           shift: user?.shift || "Unknown",
           createdAt: Date.now(),
         });
-
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} placed ${
             e.qty
@@ -448,6 +476,7 @@ export default function StaffDashboard({
           readBy: [],
         });
       }
+      playDing();
       closeModal();
     } catch (err) {
       alert("Save failed: " + err.message);
@@ -459,7 +488,6 @@ export default function StaffDashboard({
   async function removeEntry(id) {
     try {
       const entryToDel = allEntries.find((e) => e.id === id);
-
       if (entryToDel) {
         await addDoc(collection(db, "notifications"), {
           message: `${user?.name || "Unknown"} removed ${entryToDel.qty} ${
@@ -471,14 +499,12 @@ export default function StaffDashboard({
           readBy: [],
         });
       }
-
       await deleteDoc(doc(db, "extra_item_entries", id));
-    } catch (err) {
-      alert("Remove failed: " + err.message);
-    }
+      playDing();
+    } catch (err) {}
   }
 
-  // ─── SHIFT OUT / UNSIGN LOGIC ───
+  // ─── SHIFT OUT / UNSIGN LOGIC (MULTI-FLOOR COMPATIBLE) ───
   const hasSignedOut = allEntries.some(
     (e) =>
       e.area === area &&
@@ -488,20 +514,42 @@ export default function StaffDashboard({
   );
 
   const handleShiftAction = async (actionType) => {
-    const targetAreas = getTargetAreas();
-    let confirmMsg = "";
-    let itemName = "";
+    const allocation = user?.allocation || "";
+    const shift = user?.shift || "";
+    const selected = user?.selectedFloors || [];
 
-    if (actionType === "SHIFT_OUT") {
+    let targetAreas = [];
+    if (allocation === "Shift Incharge" && shift === "Night")
+      targetAreas = [
+        ...Array.from(FLOOR_AREAS),
+        "HK Desk",
+        "HK Office",
+        "Compactor",
+      ];
+    else if (
+      (allocation === "Shift Incharge" || allocation === "Floor Incharge") &&
+      shift === "Afternoon"
+    )
+      targetAreas = Array.from(FLOOR_AREAS);
+    else if (allocation === "Housekeeping Desk")
+      targetAreas = ["HK Desk", "HK Office", "Compactor"];
+    else if (
+      allocation === "Floor Incharge" &&
+      shift === "Morning" &&
+      selected.length > 0
+    )
+      targetAreas = selected;
+    else targetAreas = [area];
+
+    let confirmMsg = "";
+    if (actionType === "SHIFT_OUT")
       confirmMsg = `SIGN & VERIFY (Shift Out)\n\nYou are about to verify:\n\n${targetAreas.join(
         ", "
       )}\n\nContinue?`;
-      itemName = "Status Check";
-    } else if (actionType === "UNSIGN") {
+    else if (actionType === "UNSIGN")
       confirmMsg = `Remove verification (Undo Shift Out) for:\n\n${targetAreas.join(
         ", "
       )}\n\nContinue?`;
-    }
 
     if (!window.confirm(confirmMsg)) return;
 
@@ -526,9 +574,10 @@ export default function StaffDashboard({
           readBy: [],
         });
       } else {
+        // Automatically verify ALL assigned areas simultaneously
         for (const signArea of targetAreas) {
           await setDoc(doc(db, "extra_item_entries", makeId()), {
-            itemName,
+            itemName: "Status Check",
             area: signArea,
             locLabel: signArea,
             qty: 0,
@@ -536,7 +585,6 @@ export default function StaffDashboard({
             shift: user?.shift || "Unknown",
             createdAt: Date.now(),
           });
-
           await addDoc(collection(db, "notifications"), {
             message: `${
               user?.name || "Unknown"
@@ -548,7 +596,7 @@ export default function StaffDashboard({
           });
         }
       }
-
+      playDing();
       setCheckSuccess(actionType);
       setTimeout(() => setCheckSuccess(null), 3000);
     } catch (err) {
@@ -558,7 +606,6 @@ export default function StaffDashboard({
     }
   };
 
-  // ─── META EDIT LOGIC ───
   const openMetaEdit = () => {
     setEditAllocation(user?.allocation || "Floor Incharge");
     setEditShift(user?.shift || "Morning");
@@ -581,7 +628,6 @@ export default function StaffDashboard({
       alert("Please select at least one assigned floor to continue.");
       return;
     }
-
     if (onUpdateMeta) {
       onUpdateMeta(
         editAllocation,
@@ -605,12 +651,12 @@ export default function StaffDashboard({
         @keyframes pulseGold { 0% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.4); } 70% { box-shadow: 0 0 0 15px rgba(212, 175, 55, 0); } 100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0); } }
         .ios-glass-alert { background: linear-gradient(135deg, rgba(255, 59, 48, 0.15) 0%, rgba(255, 59, 48, 0.05) 100%); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255, 100, 100, 0.3); border-top: 1px solid rgba(255, 150, 150, 0.4); border-radius: 20px; padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; animation: iosSlideIn 0.8s cubic-bezier(0.16, 1, 0.3, 1), subtleGlow 3s infinite ease-in-out; }
         .ios-icon-glow { background: linear-gradient(135deg, rgba(255, 59, 48, 0.6), rgba(255, 59, 48, 0.2)); box-shadow: 0 4px 15px rgba(255, 59, 48, 0.4), inset 0 2px 4px rgba(255, 255, 255, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 50%; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
-        .overlay-card { background: rgba(15, 27, 45, 0.85); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255,255,255,0.1); border-radius: 32px; padding: 40px 32px; width: 90%; max-width: 400px; text-align: center; box-shadow: 0 32px 64px rgba(0,0,0,0.6); animation: iosSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
-        .pulse-btn { width: 100%; background: #D4AF37; color: #000; border: none; border-radius: 16px; padding: 18px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 32px; animation: pulseGold 2s infinite; transition: transform 0.2s; }
+        .overlay-card { background: rgba(15, 27, 45, 0.85); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255,255,255,0.1); border-radius: 32px; padding: 32px; width: 90%; max-width: 440px; box-shadow: 0 32px 64px rgba(0,0,0,0.6); animation: iosSlideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1); }
+        .pulse-btn { width: 100%; background: #D4AF37; color: #000; border: none; border-radius: 16px; padding: 18px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 24px; animation: pulseGold 2s infinite; transition: transform 0.2s; }
         .pulse-btn:active { transform: scale(0.96); }
       `}</style>
 
-      {/* ── PREMIUM SHIFT IN OVERLAY ── */}
+      {/* ── DAILY CONFIGURATION OVERLAY (SHIFT IN) ── */}
       {!hasShiftedIn && (
         <div
           style={{
@@ -626,89 +672,154 @@ export default function StaffDashboard({
           }}
         >
           <div className="overlay-card">
-            <div
-              style={{
-                width: 64,
-                height: 64,
-                background: "rgba(212, 175, 55, 0.1)",
-                borderRadius: "50%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 32,
-                margin: "0 auto 24px",
-                border: "1px solid rgba(212, 175, 55, 0.3)",
-              }}
-            >
-              👋
-            </div>
             <h2
               style={{
-                margin: 0,
-                fontSize: 28,
+                margin: "0 0 8px 0",
+                fontSize: 26,
                 color: "#FFF",
                 fontWeight: 700,
                 letterSpacing: "-0.5px",
+                textAlign: "center",
               }}
             >
-              Welcome, {user?.name?.split(" ")[0]}
+              Start Your Shift
             </h2>
             <p
               style={{
-                margin: "12px 0 24px",
-                fontSize: 15,
+                margin: "0 0 24px",
+                fontSize: 14,
                 color: "#B0BFDA",
                 lineHeight: 1.5,
+                textAlign: "center",
               }}
             >
-              Ready to begin your{" "}
-              <strong style={{ color: "#FFF" }}>{user?.shift}</strong> shift?
+              Please confirm your assignment for today.
             </p>
 
             <div
               style={{
-                background: "rgba(0,0,0,0.2)",
-                borderRadius: 16,
-                padding: "16px",
+                background: "rgba(0,0,0,0.3)",
+                borderRadius: 20,
+                padding: "20px",
                 border: "1px solid rgba(255,255,255,0.05)",
+                textAlign: "left",
               }}
             >
+              <div style={{ marginBottom: 16 }}>
+                <div style={S.fieldLabel}>Allocation</div>
+                <select
+                  style={S.input}
+                  value={shiftInAllocation}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setShiftInAllocation(value);
+                    if (value === "Floor Incharge") {
+                      if (
+                        shiftInShift !== "Morning" &&
+                        shiftInShift !== "Afternoon"
+                      )
+                        setShiftInShift("Morning");
+                    } else if (value === "Shift Incharge") {
+                      if (
+                        shiftInShift !== "Afternoon" &&
+                        shiftInShift !== "Night"
+                      )
+                        setShiftInShift("Afternoon");
+                    } else if (value === "Housekeeping Desk") {
+                      if (
+                        shiftInShift !== "Morning" &&
+                        shiftInShift !== "Afternoon"
+                      )
+                        setShiftInShift("Morning");
+                    }
+                  }}
+                >
+                  <option>Floor Incharge</option>
+                  <option>Shift Incharge</option>
+                  <option>Housekeeping Desk</option>
+                </select>
+              </div>
+
               <div
                 style={{
-                  fontSize: 11,
-                  color: "#6B7A99",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                  fontWeight: 600,
-                  marginBottom: 8,
+                  marginBottom:
+                    shiftInAllocation === "Floor Incharge" &&
+                    shiftInShift === "Morning"
+                      ? 16
+                      : 0,
                 }}
               >
-                Assigned Areas
+                <div style={S.fieldLabel}>Shift</div>
+                <select
+                  style={S.input}
+                  value={shiftInShift}
+                  onChange={(e) => setShiftInShift(e.target.value)}
+                >
+                  {shiftInAllocation === "Floor Incharge" && (
+                    <>
+                      <option value="Morning">Morning</option>
+                      <option value="Afternoon">Afternoon</option>
+                    </>
+                  )}
+                  {shiftInAllocation === "Shift Incharge" && (
+                    <>
+                      <option value="Afternoon">Afternoon</option>
+                      <option value="Night">Night</option>
+                    </>
+                  )}
+                  {shiftInAllocation === "Housekeeping Desk" && (
+                    <>
+                      <option value="Morning">Morning</option>
+                      <option value="Afternoon">Afternoon</option>
+                    </>
+                  )}
+                </select>
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  justifyContent: "center",
-                }}
-              >
-                {getTargetAreas().map((f) => (
-                  <span
-                    key={f}
-                    style={{
-                      background: "rgba(255,255,255,0.05)",
-                      padding: "6px 12px",
-                      borderRadius: 8,
-                      fontSize: 13,
-                      color: "#FFF",
-                      fontWeight: 500,
-                    }}
-                  >
-                    {f}
-                  </span>
-                ))}
-              </div>
+
+              {shiftInAllocation === "Floor Incharge" &&
+                shiftInShift === "Morning" && (
+                  <div>
+                    <div style={{ ...S.fieldLabel, marginBottom: 12 }}>
+                      Assigned Floors (Tap to select)
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "8px",
+                      }}
+                    >
+                      {Array.from(FLOOR_AREAS).map((floor) => {
+                        const isActive = shiftInFloors.includes(floor);
+                        return (
+                          <div
+                            key={floor}
+                            onClick={() => handleShiftInToggleFloor(floor)}
+                            style={{
+                              background: isActive
+                                ? "rgba(212, 175, 55, 0.15)"
+                                : "#162236",
+                              border: `1px solid ${
+                                isActive ? C.gold : C.borderMid
+                              }`,
+                              borderRadius: "10px",
+                              padding: "10px",
+                              color: isActive ? C.gold : C.muted,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              textAlign: "center",
+                              cursor: "pointer",
+                              transition: "all 0.2s",
+                              userSelect: "none",
+                            }}
+                          >
+                            {floor}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
             </div>
 
             <button
@@ -716,7 +827,7 @@ export default function StaffDashboard({
               disabled={saving}
               className="pulse-btn"
             >
-              {saving ? "Starting..." : "Start Shift"}
+              {saving ? "Processing..." : "Confirm & Start Shift"}
             </button>
             <button
               onClick={onLogout}
@@ -726,11 +837,13 @@ export default function StaffDashboard({
                 color: "#F87171",
                 fontSize: 14,
                 fontWeight: 600,
-                marginTop: 20,
+                marginTop: 24,
                 cursor: "pointer",
+                display: "block",
+                width: "100%",
               }}
             >
-              Logout
+              Log Out
             </button>
           </div>
         </div>
@@ -763,8 +876,8 @@ export default function StaffDashboard({
                 }}
               >
                 {alertType === "SHIFT_IN"
-                  ? "Please tap 'Start Shift' below to start your active session."
-                  : "Please verify and save your area status below to complete your accountability."}
+                  ? "Please start your shift to log your accountability."
+                  : "Please verify and save your area status below to complete your shift."}
               </div>
             </div>
           </div>
@@ -866,7 +979,7 @@ export default function StaffDashboard({
         </div>
       </div>
 
-      {/* ── AREA PILLS (FILTERED STRICTLY BY ALLOCATION & SHIFT) ── */}
+      {/* ── AREA PILLS ── */}
       <div style={S.pillsWrap}>
         {visibleAreas.map((a) => (
           <button
@@ -970,7 +1083,7 @@ export default function StaffDashboard({
         })}
       </div>
 
-      {/* ── DYNAMIC SHIFT OUT / VERIFICATION BUTTONS ── */}
+      {/* ── DYNAMIC SHIFT OUT BUTTONS ── */}
       {!isAll && (
         <div style={{ marginTop: 24, paddingBottom: 20 }}>
           {hasSignedOut ? (
@@ -1049,7 +1162,6 @@ export default function StaffDashboard({
                 </div>
               </div>
             )}
-
             {isFloor(area) && locType === "Pantry" && (
               <div style={S.fieldBlock}>
                 <div style={S.fieldLabel}>Pantry</div>
@@ -1069,7 +1181,6 @@ export default function StaffDashboard({
                 </div>
               </div>
             )}
-
             {isFloor(area) && locType === "Room" && (
               <div style={S.fieldBlock}>
                 <div style={S.fieldLabel}>Room Number</div>
@@ -1082,7 +1193,6 @@ export default function StaffDashboard({
                 />
               </div>
             )}
-
             <div style={S.fieldBlock}>
               <div style={S.fieldLabel}>Quantity</div>
               <div style={{ display: "flex", gap: 8 }}>
@@ -1175,7 +1285,6 @@ export default function StaffDashboard({
                 ✕
               </button>
             </div>
-
             <div style={S.modalDivider} />
 
             <div style={S.fieldBlock}>
@@ -1187,7 +1296,6 @@ export default function StaffDashboard({
                 onChange={(e) => {
                   const value = e.target.value;
                   setEditAllocation(value);
-                  // Safely set defaults without wiping out valid shift options
                   if (value === "Floor Incharge") {
                     if (editShift !== "Morning" && editShift !== "Afternoon")
                       setEditShift("Morning");
@@ -1235,7 +1343,6 @@ export default function StaffDashboard({
               </select>
             </div>
 
-            {/* ── MULTI-SELECT FLOORS IN MODAL ── */}
             {editAllocation === "Floor Incharge" && editShift === "Morning" && (
               <div style={S.fieldBlock}>
                 <div style={S.fieldLabel}>Assigned Floors (Multi-Select)</div>
