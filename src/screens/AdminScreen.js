@@ -413,7 +413,6 @@ export default function AdminScreen({
   };
 
   // ─── NOTIFICATION FILTERING ───
-  // 1. Live Bell Notifications (Rolling 12 Hours)
   const todaysNotifications = notifications.filter(
     (n) => n.createdAt >= recentLimit
   );
@@ -421,7 +420,6 @@ export default function AdminScreen({
     (n) => !n.readBy?.includes(user?.name)
   ).length;
 
-  // 2. Activity Tab Notifications (Strictly based on selected date)
   const viewedNotifications = notifications.filter((n) => {
     const startOfDay = new Date(
       activityDate.getFullYear(),
@@ -482,58 +480,136 @@ export default function AdminScreen({
     return map;
   }
 
+  // ─── UPDATED: ADVANCED HIERARCHICAL CSV EXPORT ───
   const exportCSV = () => {
     if (!startDate || !endDate)
       return alert("Please select both a start and end date.");
-    const start = new Date(startDate).getTime();
+    
+    // We snapshot everything up to the END date to get true cumulative totals
     const end = new Date(endDate).setHours(23, 59, 59, 999);
+    const snapshotEntries = allEntries.filter((e) => e.createdAt <= end);
 
-    const rangeEntries = allEntries.filter(
-      (e) => e.createdAt >= start && e.createdAt <= end
-    );
-    if (rangeEntries.length === 0)
-      return alert("No inventory data found for this date range.");
-
-    rangeEntries.sort((a, b) => {
-      const dateA = new Date(a.createdAt).setHours(0, 0, 0, 0);
-      const dateB = new Date(b.createdAt).setHours(0, 0, 0, 0);
-      if (dateA !== dateB) return dateA - dateB;
-
-      const shiftOrder = { Morning: 1, Afternoon: 2, Night: 3, Unknown: 4 };
-      const shiftA = shiftOrder[a.shift || "Unknown"] || 99;
-      const shiftB = shiftOrder[b.shift || "Unknown"] || 99;
-      if (shiftA !== shiftB) return shiftA - shiftB;
-
-      return a.createdAt - b.createdAt;
+    // 1. Determine "Staff Incharge" for every area up to the end date
+    const areaStaff = {};
+    AREAS.forEach((area) => {
+      // Find latest Shift In or Status Check for this specific area
+      const logs = snapshotEntries.filter(
+        (e) => e.area === area && (e.itemName === "Shift In" || e.itemName === "Status Check")
+      );
+      if (logs.length > 0) {
+        logs.sort((a, b) => b.createdAt - a.createdAt); // Newest first
+        const latest = logs[0];
+        areaStaff[area] = latest.createdBy || "Unnamed";
+      } else {
+        areaStaff[area] = "Unnamed";
+      }
     });
 
-    let csvContent = "\uFEFF";
-    csvContent +=
-      "Date,Time,Shift,Action Type,Item Name,Quantity,Area,Specific Location,Incharge (Updated By),Current Master PAR\n";
+    // 2. Compile Master Totals and Area Wise Breakdown
+    const masterTotals = {};
+    const areaWise = {};
+    const allItemNames = Object.keys(parValues).sort();
 
-    rangeEntries.forEach((e) => {
-      const d = new Date(e.createdAt);
-      const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(
-        d.getMonth() + 1
-      ).padStart(2, "0")}-${d.getFullYear()}`;
-      const timeStr = d.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
-      const shift = e.shift || "Not Recorded";
-      const isCheck = e.itemName === "Status Check";
-      const actionType = isCheck ? "Area Sign-off" : "Inventory Deployment";
-      const item = isCheck ? "Verification" : e.itemName;
-      const qty = isCheck ? "-" : e.qty || 0;
-      const area = e.area || "";
-      const loc = e.locLabel || "";
-      const creator = e.createdBy || "Unknown";
-      const par = isCheck ? "-" : parValues[e.itemName] || 0;
-
-      csvContent += `"${dateStr}","${timeStr}","${shift}","${actionType}","${item}","${qty}","${area}","${loc}","${creator}","${par}"\n`;
+    // Initialize all items from PAR list so they show up even if count is 0
+    allItemNames.forEach((item) => {
+      masterTotals[item] = { par: parValues[item] || 0, actual: 0 };
+      areaWise[item] = {}; // Will hold area -> loc -> qty
     });
 
+    // Populate actual counts
+    snapshotEntries.forEach((e) => {
+      if (e.itemName === "Shift In" || e.itemName === "Status Check") return;
+      
+      const item = e.itemName;
+      if (!masterTotals[item]) return; // Skip items removed from PAR list completely
+
+      const area = e.area || "Unknown Area";
+      const loc = e.locLabel || area;
+      const qty = parseInt(e.qty) || 0;
+
+      masterTotals[item].actual += qty;
+
+      if (!areaWise[item][area]) areaWise[item][area] = {};
+      if (!areaWise[item][area][loc]) areaWise[item][area][loc] = 0;
+      areaWise[item][area][loc] += qty;
+    });
+
+    let csvContent = "\uFEFF"; // Byte Order Mark for Excel compatibility
+
+    // Header info
+    csvContent += `Report Generated:,${new Date().toLocaleDateString()}\n`;
+    csvContent += `Selected Data Range:,${startDate} to ${endDate}\n\n`;
+
+    // ─── TABLE 1: MASTER SUMMARY ───
+    csvContent += ",Master\n";
+    csvContent += "Item,Actual count,Par,Variance\n";
+
+    allItemNames.forEach((item) => {
+      const actual = masterTotals[item].actual;
+      const par = masterTotals[item].par;
+      const variance = actual - par;
+      csvContent += `"${item}",${actual},${par},${variance}\n`;
+    });
+
+    csvContent += "\n\n";
+
+    // ─── TABLE 2: AREA WISE INVENTORY ───
+    csvContent += ",Area Wise Inventory\n";
+    // Blank column represents the "Room" column in the screenshot
+    csvContent += "Item,Area,Location,,Count,Par,Variance,Staff Incharge\n";
+
+    allItemNames.forEach((item) => {
+      const actualMaster = masterTotals[item].actual;
+      const parMaster = masterTotals[item].par;
+      const varMaster = actualMaster - parMaster;
+      
+      const areasWithItems = Object.keys(areaWise[item]).sort();
+      let isFirstItemRow = true;
+
+      if (areasWithItems.length === 0) {
+        // Feature Request: List the item even if it has 0 deployments
+        csvContent += `"${item}",,,,,,, \n`;
+      } else {
+        areasWithItems.forEach((area) => {
+          let isFirstAreaRow = true;
+          const sortedLocs = Object.keys(areaWise[item][area]).sort();
+          let areaTotal = 0;
+          const staffName = areaStaff[area] || "Unnamed";
+
+          sortedLocs.forEach((loc) => {
+            const qty = areaWise[item][area][loc];
+            areaTotal += qty;
+
+            // Separate "Room 120" into Type ("Room") and Detail ("120") for cleaner columns
+            let locType = loc;
+            let locDetail = "";
+            if (loc.toLowerCase().startsWith("room ")) {
+              locType = "Room";
+              locDetail = loc.substring(5).trim();
+            } else if (loc.toLowerCase().startsWith("pantry ")) {
+              locType = "Pantry";
+              locDetail = loc.substring(7).trim();
+            }
+
+            const colA = isFirstItemRow ? `"${item}"` : "";
+            const colB = isFirstAreaRow ? `"${area}"` : "";
+
+            csvContent += `${colA},${colB},"${locType}","${locDetail}",${qty},,,"${staffName}"\n`;
+
+            isFirstItemRow = false;
+            isFirstAreaRow = false;
+          });
+
+          // Subtotal for the Area
+          csvContent += `,Total ${area},,,${areaTotal},,,\n`;
+        });
+      }
+      
+      // Master Item Total Row directly under its areas
+      csvContent += `,Total All Areas,,,${actualMaster},${parMaster},${varMaster},\n\n`;
+    });
+
+    // 3. Trigger Download
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -604,7 +680,7 @@ export default function AdminScreen({
     }
   };
 
-  // ─── UPDATED: CORRECT NIGHT SHIFT CUTOFF LOGIC ───
+  // ─── STATUS TAB LOGIC ───
   const getShiftStatusData = () => {
     const baseDay = new Date(
       statusDate.getFullYear(),
@@ -613,7 +689,6 @@ export default function AdminScreen({
     );
     const baseTime = baseDay.getTime();
 
-    // Night Shift definitions: 12:00 PM (Noon) acts as the absolute boundary.
     const yesterdayNoon = baseTime - 12 * 3600 * 1000;
     const todayNoon = baseTime + 12 * 3600 * 1000;
     const tomorrowNoon = baseTime + 36 * 3600 * 1000;
@@ -637,16 +712,12 @@ export default function AdminScreen({
       let category = e.shift || "Morning";
 
       if (category === "Night") {
-        // Any night shift logged between noon yesterday and noon today is "Night (Previous)"
         if (e.createdAt >= yesterdayNoon && e.createdAt < todayNoon) {
           category = "Night (Previous)";
-        }
-        // Any night shift logged between noon today and noon tomorrow is "Night (Today)"
-        else if (e.createdAt >= todayNoon && e.createdAt < tomorrowNoon) {
+        } else if (e.createdAt >= todayNoon && e.createdAt < tomorrowNoon) {
           category = "Night (Today)";
-        } else return; // Outside the viewing scope of this specific date
+        } else return;
       } else {
-        // Morning and Afternoon strictly adhere to the 24-hour calendar day
         if (
           e.createdAt < baseTime ||
           e.createdAt >= baseTime + 24 * 3600 * 1000

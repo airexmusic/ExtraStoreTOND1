@@ -5,58 +5,94 @@ import {
   onSnapshot,
   doc,
   updateDoc,
-  deleteField,
+  deleteDoc,
 } from "firebase/firestore";
 
 export default function UserManagementScreen({ user, onBack }) {
   const [users, setUsers] = useState([]);
+  const [requests, setRequests] = useState([]);
 
   // Edit Modal State
   const [editingUser, setEditingUser] = useState(null);
   const [editName, setEditName] = useState("");
   const [editRole, setEditRole] = useState("Associate");
 
+  // Fetch Users and Requests
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
+    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       setUsers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
-    return () => unsub();
+    
+    const unsubReqs = onSnapshot(collection(db, "user_requests"), (snap) => {
+      setRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => {
+      unsubUsers();
+      unsubReqs();
+    };
   }, []);
 
-  const pendingUsers = users.filter((u) => u.hasPendingUpdate);
-  const activeUsers = users.filter(
-    (u) => u.status !== "Suspended" && !u.hasPendingUpdate
-  );
+  // Filter Users
+  const activeUsers = users.filter((u) => u.status !== "Suspended");
   const suspendedUsers = users.filter((u) => u.status === "Suspended");
 
-  const approveChange = async (u) => {
+  // ─── PENDING REQUESTS FUNCTIONS ───
+  const approveChange = async (req) => {
+    if (!req.requestUserId || req.requestUserId === "unknown_id") {
+      alert("Error: This request is missing a valid User ID. Please reject it and have the user submit a new one.");
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, "users", u.id), {
-        name: u.pendingName,
-        hasPendingUpdate: false,
-        pendingName: deleteField(),
-      });
+      // If it's a password request, just clear it from the queue
+      if (req.type.toLowerCase().includes("password")) {
+         await deleteDoc(doc(db, "user_requests", req.id));
+         alert("Password reset request cleared. Please trigger the reset email from your Firebase Console.");
+         return;
+      }
+
+      // Update the actual user profile
+      const userRef = doc(db, "users", req.requestUserId);
+      const updateData = {};
+      const field = req.type.toLowerCase().includes("name") ? "name" : "email";
+      updateData[field] = req.newValue;
+      
+      await updateDoc(userRef, updateData);
+      
+      // Delete the request
+      await deleteDoc(doc(db, "user_requests", req.id));
+      alert("Change approved and applied.");
     } catch (err) {
       alert("Failed to approve: " + err.message);
     }
   };
 
-  const rejectChange = async (u) => {
+  const rejectChange = async (req) => {
     try {
-      await updateDoc(doc(db, "users", u.id), {
-        hasPendingUpdate: false,
-        pendingName: deleteField(),
-      });
+      // Just delete the request document to clear it from the queue
+      await deleteDoc(doc(db, "user_requests", req.id));
     } catch (err) {
       alert("Failed to reject: " + err.message);
     }
   };
 
+  // ─── USER STATUS & DELETE FUNCTIONS ───
   const toggleUserStatus = async (u, newStatus) => {
     try {
       await updateDoc(doc(db, "users", u.id), { status: newStatus });
     } catch (err) {
       alert("Failed to update status: " + err.message);
+    }
+  };
+
+  const deleteUserPermanently = async (u) => {
+    if (!window.confirm(`PERMANENT DELETE: This will completely remove ${u.name} from the database. Note: You must also delete this user from the Firebase Authentication console manually to prevent them from logging in again.`)) return;
+
+    try {
+      await deleteDoc(doc(db, "users", u.id));
+    } catch (err) {
+      alert("Failed to delete: " + err.message);
     }
   };
 
@@ -103,39 +139,42 @@ export default function UserManagementScreen({ user, onBack }) {
         </button>
       </div>
 
-      {pendingUsers.length > 0 && (
+      {/* ── PENDING APPROVALS ── */}
+      {requests.length > 0 && (
         <div style={S.section}>
           <div style={S.sectionTitle}>
-            Pending Approvals ({pendingUsers.length})
+            Pending Approvals ({requests.length})
           </div>
-          {pendingUsers.map((u) => (
-            <div
-              key={u.id}
-              style={{ ...S.userCard, borderLeft: `4px solid ${C.gold}` }}
-            >
-              <div>
-                <div style={S.userName}>
-                  {u.name}{" "}
-                  <span style={{ color: C.muted, fontWeight: 400 }}>
-                    wants to change name to
-                  </span>{" "}
-                  <span style={{ color: C.gold }}>{u.pendingName}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {requests.map((req) => (
+              <div key={req.id} style={S.requestCard}>
+                <div style={S.reqCardBody}>
+                  <div style={S.reqHeaderRow}>
+                    <div style={S.reqUser}>{req.requestUserName || "Unknown User"}</div>
+                    <div style={S.reqBadge}>{req.type} Change</div>
+                  </div>
+                  
+                  <div style={S.reqValueBox}>
+                    <span style={S.reqValueLabel}>Requested Value:</span>
+                    <span style={S.reqValueText}>{req.newValue}</span>
+                  </div>
                 </div>
-                <div style={S.userEmail}>{u.email}</div>
+
+                <div style={S.reqActionRow}>
+                  <button onClick={() => approveChange(req)} style={S.btnApproveFull}>
+                    Approve ✓
+                  </button>
+                  <button onClick={() => rejectChange(req)} style={S.btnRejectFull}>
+                    Reject ✕
+                  </button>
+                </div>
               </div>
-              <div style={S.actionRow}>
-                <button onClick={() => approveChange(u)} style={S.approveBtn}>
-                  Approve
-                </button>
-                <button onClick={() => rejectChange(u)} style={S.rejectBtn}>
-                  Reject
-                </button>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
+      {/* ── ACTIVE STAFF ── */}
       <div style={S.section}>
         <div style={S.sectionTitle}>Active Staff ({activeUsers.length})</div>
         {activeUsers.map((u) => (
@@ -156,6 +195,12 @@ export default function UserManagementScreen({ user, onBack }) {
               >
                 Deactivate
               </button>
+              <button
+                onClick={() => deleteUserPermanently(u)}
+                style={S.deleteBtn}
+              >
+                Delete
+              </button>
             </div>
           </div>
         ))}
@@ -164,12 +209,13 @@ export default function UserManagementScreen({ user, onBack }) {
         )}
       </div>
 
+      {/* ── DEACTIVATED STAFF ── */}
       <div style={S.section}>
         <div style={S.sectionTitle}>
           Deactivated Staff ({suspendedUsers.length})
         </div>
         {suspendedUsers.map((u) => (
-          <div key={u.id} style={{ ...S.userCard, opacity: 0.6 }}>
+          <div key={u.id} style={{ ...S.userCard, opacity: 0.5 }}>
             <div>
               <div style={S.userName}>
                 {u.name} <span style={S.roleBadge}>{u.role}</span>
@@ -185,6 +231,12 @@ export default function UserManagementScreen({ user, onBack }) {
                 style={S.reactivateBtn}
               >
                 Reactivate
+              </button>
+              <button
+                onClick={() => deleteUserPermanently(u)}
+                style={S.deleteBtn}
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -256,6 +308,7 @@ const C = {
   green: "#34D399",
   blue: "#3B82F6",
 };
+
 const S = {
   root: {
     minHeight: "100vh",
@@ -285,26 +338,108 @@ const S = {
     letterSpacing: "-0.3px",
   },
   backBtn: {
-    background: "#162236",
-    border: `1px solid ${C.borderMid}`,
-    color: C.text,
-    padding: "8px 16px",
-    borderRadius: 10,
+    background: "transparent",
+    border: "none",
+    color: C.gold,
+    padding: "8px 0",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
   },
   section: { marginBottom: 32 },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 600,
     color: C.muted,
     textTransform: "uppercase",
     letterSpacing: "0.1em",
-    marginBottom: 12,
+    marginBottom: 16,
     borderBottom: `1px solid ${C.borderMid}`,
     paddingBottom: 8,
   },
+  
+  // New Request Card Styles
+  requestCard: {
+    background: C.surface,
+    borderRadius: 16,
+    border: `1px solid ${C.borderMid}`,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  },
+  reqCardBody: {
+    padding: "16px",
+  },
+  reqHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  reqUser: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: C.text,
+    letterSpacing: "-0.2px",
+  },
+  reqBadge: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: C.gold,
+    background: "rgba(212,175,55,0.1)",
+    padding: "4px 8px",
+    borderRadius: 8,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  reqValueBox: {
+    background: "#162236",
+    border: `1px solid ${C.borderMid}`,
+    borderRadius: 10,
+    padding: "12px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  reqValueLabel: {
+    fontSize: 12,
+    color: C.muted,
+    fontWeight: 500,
+  },
+  reqValueText: {
+    fontSize: 14,
+    color: C.text,
+    fontWeight: 600,
+  },
+  reqActionRow: {
+    display: "flex",
+    borderTop: `1px solid ${C.borderMid}`,
+  },
+  btnApproveFull: {
+    flex: 1,
+    padding: "14px",
+    background: "rgba(52,211,153,0.05)",
+    color: C.green,
+    border: "none",
+    borderRight: `1px solid ${C.borderMid}`,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "background 0.2s",
+  },
+  btnRejectFull: {
+    flex: 1,
+    padding: "14px",
+    background: "rgba(248,113,113,0.05)",
+    color: C.red,
+    border: "none",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "background 0.2s",
+  },
+
+  // Existing User Card Styles
   userCard: {
     background: C.surface,
     border: `1px solid ${C.borderMid}`,
@@ -333,32 +468,12 @@ const S = {
   },
   userEmail: { fontSize: 13, color: C.muted },
   actionRow: { display: "flex", gap: 8 },
-  approveBtn: {
-    background: C.green,
-    color: "#000",
-    border: "none",
-    borderRadius: 8,
-    padding: "6px 14px",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  rejectBtn: {
-    background: "rgba(248,113,113,0.1)",
-    color: C.red,
-    border: "none",
-    borderRadius: 8,
-    padding: "6px 14px",
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
   suspendBtn: {
     background: "rgba(248,113,113,0.1)",
     color: C.red,
     border: "none",
     borderRadius: 8,
-    padding: "6px 14px",
+    padding: "6px 12px",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
@@ -368,7 +483,7 @@ const S = {
     color: C.green,
     border: "none",
     borderRadius: 8,
-    padding: "6px 14px",
+    padding: "6px 12px",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
@@ -378,7 +493,17 @@ const S = {
     color: C.blue,
     border: "none",
     borderRadius: 8,
-    padding: "6px 14px",
+    padding: "6px 12px",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  deleteBtn: {
+    background: "rgba(248,113,113,0.15)", // Slightly stronger red background
+    color: "#ef4444", 
+    border: "1px solid rgba(248,113,113,0.3)",
+    borderRadius: 8,
+    padding: "6px 12px",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
