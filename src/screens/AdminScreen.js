@@ -480,24 +480,21 @@ export default function AdminScreen({
     return map;
   }
 
-  // ─── UPDATED: ADVANCED HIERARCHICAL CSV EXPORT ───
+  // ─── MASTER INVENTORY REPORT EXPORT ───
   const exportCSV = () => {
     if (!startDate || !endDate)
       return alert("Please select both a start and end date.");
     
-    // We snapshot everything up to the END date to get true cumulative totals
     const end = new Date(endDate).setHours(23, 59, 59, 999);
     const snapshotEntries = allEntries.filter((e) => e.createdAt <= end);
 
-    // 1. Determine "Staff Incharge" for every area up to the end date
     const areaStaff = {};
     AREAS.forEach((area) => {
-      // Find latest Shift In or Status Check for this specific area
       const logs = snapshotEntries.filter(
         (e) => e.area === area && (e.itemName === "Shift In" || e.itemName === "Status Check")
       );
       if (logs.length > 0) {
-        logs.sort((a, b) => b.createdAt - a.createdAt); // Newest first
+        logs.sort((a, b) => b.createdAt - a.createdAt);
         const latest = logs[0];
         areaStaff[area] = latest.createdBy || "Unnamed";
       } else {
@@ -505,23 +502,20 @@ export default function AdminScreen({
       }
     });
 
-    // 2. Compile Master Totals and Area Wise Breakdown
     const masterTotals = {};
     const areaWise = {};
     const allItemNames = Object.keys(parValues).sort();
 
-    // Initialize all items from PAR list so they show up even if count is 0
     allItemNames.forEach((item) => {
       masterTotals[item] = { par: parValues[item] || 0, actual: 0 };
-      areaWise[item] = {}; // Will hold area -> loc -> qty
+      areaWise[item] = {}; 
     });
 
-    // Populate actual counts
     snapshotEntries.forEach((e) => {
       if (e.itemName === "Shift In" || e.itemName === "Status Check") return;
       
       const item = e.itemName;
-      if (!masterTotals[item]) return; // Skip items removed from PAR list completely
+      if (!masterTotals[item]) return; 
 
       const area = e.area || "Unknown Area";
       const loc = e.locLabel || area;
@@ -534,13 +528,11 @@ export default function AdminScreen({
       areaWise[item][area][loc] += qty;
     });
 
-    let csvContent = "\uFEFF"; // Byte Order Mark for Excel compatibility
+    let csvContent = "\uFEFF"; 
 
-    // Header info
     csvContent += `Report Generated:,${new Date().toLocaleDateString()}\n`;
     csvContent += `Selected Data Range:,${startDate} to ${endDate}\n\n`;
 
-    // ─── TABLE 1: MASTER SUMMARY ───
     csvContent += ",Master\n";
     csvContent += "Item,Actual count,Par,Variance\n";
 
@@ -553,9 +545,7 @@ export default function AdminScreen({
 
     csvContent += "\n\n";
 
-    // ─── TABLE 2: AREA WISE INVENTORY ───
     csvContent += ",Area Wise Inventory\n";
-    // Blank column represents the "Room" column in the screenshot
     csvContent += "Item,Area,Location,,Count,Par,Variance,Staff Incharge\n";
 
     allItemNames.forEach((item) => {
@@ -567,7 +557,6 @@ export default function AdminScreen({
       let isFirstItemRow = true;
 
       if (areasWithItems.length === 0) {
-        // Feature Request: List the item even if it has 0 deployments
         csvContent += `"${item}",,,,,,, \n`;
       } else {
         areasWithItems.forEach((area) => {
@@ -580,7 +569,6 @@ export default function AdminScreen({
             const qty = areaWise[item][area][loc];
             areaTotal += qty;
 
-            // Separate "Room 120" into Type ("Room") and Detail ("120") for cleaner columns
             let locType = loc;
             let locDetail = "";
             if (loc.toLowerCase().startsWith("room ")) {
@@ -600,16 +588,13 @@ export default function AdminScreen({
             isFirstAreaRow = false;
           });
 
-          // Subtotal for the Area
           csvContent += `,Total ${area},,,${areaTotal},,,\n`;
         });
       }
       
-      // Master Item Total Row directly under its areas
       csvContent += `,Total All Areas,,,${actualMaster},${parMaster},${varMaster},\n\n`;
     });
 
-    // 3. Trigger Download
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -623,13 +608,101 @@ export default function AdminScreen({
     document.body.removeChild(link);
   };
 
+  // ─── UPDATED USER ACTIVITY LOG EXPORT ───
   const exportActivityReport = async () => {
     if (!startDate || !endDate)
       return alert("Please select both a start and end date.");
+    
     const start = new Date(startDate).getTime();
     const end = new Date(endDate).setHours(23, 59, 59, 999);
 
     try {
+      let csvContent = "\uFEFF";
+      csvContent += `USER ACTIVITY REPORT\nDate Range:,${startDate} to ${endDate}\n\n`;
+
+      // ─── SECTION 1: SHIFT STATUS TABLES ───
+      csvContent += "=== SHIFT SIGN-OFF STATUS ===\n\n";
+
+      const startObj = new Date(startDate);
+      const endObj = new Date(endDate);
+      
+      for (let d = new Date(startObj); d <= endObj; d.setDate(d.getDate() + 1)) {
+        const baseDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const baseTime = baseDay.getTime();
+        
+        const yesterdayNoon = baseTime - 12 * 3600 * 1000;
+        const todayNoon = baseTime + 12 * 3600 * 1000;
+        const tomorrowNoon = baseTime + 36 * 3600 * 1000;
+
+        const shiftData = {
+          "Night (Previous)": {},
+          Morning: {},
+          Afternoon: {},
+          "Night (Today)": {},
+        };
+        
+        Object.keys(shiftData).forEach((shift) => {
+          TRACKING_AREAS.forEach((area) => {
+            shiftData[shift][area] = { user: "Unnamed", time: null, isSigned: false };
+          });
+        });
+
+        // Evaluate Status Checks and Shift Ins to gather top-table data
+        allEntries.forEach((e) => {
+          if (e.itemName !== "Status Check" && e.itemName !== "Shift In") return;
+
+          let category = e.shift || "Morning";
+
+          if (category === "Night") {
+            if (e.createdAt >= yesterdayNoon && e.createdAt < todayNoon) {
+              category = "Night (Previous)";
+            } else if (e.createdAt >= todayNoon && e.createdAt < tomorrowNoon) {
+              category = "Night (Today)";
+            } else return;
+          } else {
+            if (e.createdAt < baseTime || e.createdAt >= baseTime + 24 * 3600 * 1000) return;
+          }
+
+          if (shiftData[category] && shiftData[category][e.area]) {
+            const areaObj = shiftData[category][e.area];
+            if (e.itemName === "Shift In") {
+              if (!areaObj.isSigned) {
+                areaObj.user = e.createdBy; // Logged in but not signed yet
+              }
+            } else if (e.itemName === "Status Check") {
+              if (!areaObj.time || e.createdAt > areaObj.time) {
+                areaObj.time = e.createdAt;
+                areaObj.user = e.createdBy;
+                areaObj.isSigned = true;
+              }
+            }
+          }
+        });
+
+        const dateString = baseDay.toLocaleDateString();
+        const shiftsOrder = ["Night (Previous)", "Morning", "Afternoon", "Night (Today)"];
+        
+        shiftsOrder.forEach(shiftName => {
+          csvContent += `--- ${dateString} | ${shiftName} Shift ---\n`;
+          csvContent += "Floor,Status,User,Time\n";
+          
+          TRACKING_AREAS.forEach(areaName => {
+            const sData = shiftData[shiftName][areaName];
+            const status = sData.isSigned ? "Signed" : "Not Signed";
+            const user = sData.user || "Unnamed";
+            const timeStr = sData.time ? formatTime(sData.time) : "-";
+            
+            csvContent += `"${areaName}","${status}","${user}","${timeStr}"\n`;
+          });
+          csvContent += "\n";
+        });
+      }
+
+      // ─── SECTION 2: RAW DETAILED LOGS ───
+      csvContent += "========================================\n\n";
+      csvContent += "=== DETAILED USER ACTIVITY LOG ===\n\n";
+      csvContent += "Date,Time,Shift,User,Action Details\n";
+
       const q = query(
         collection(db, "notifications"),
         where("createdAt", ">=", start),
@@ -638,31 +711,27 @@ export default function AdminScreen({
       );
       const snap = await getDocs(q);
 
-      if (snap.empty)
-        return alert(
-          "No user activity logs found for this specific date range."
-        );
+      if (snap.empty) {
+        csvContent += "No user activity logs found.,,,,\n";
+      } else {
+        snap.docs.forEach((docSnap) => {
+          const notif = docSnap.data();
+          const d = new Date(notif.createdAt);
+          const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(
+            d.getMonth() + 1
+          ).padStart(2, "0")}-${d.getFullYear()}`;
+          const timeStr = d.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
 
-      let csvContent = "\uFEFF";
-      csvContent += "Date,Time,Shift,User,Action Details\n";
+          const shift = notif.shift || "Not Recorded";
+          const user = notif.createdBy || "Unknown";
+          const safeMsg = notif.message.replace(/"/g, '""');
 
-      snap.docs.forEach((docSnap) => {
-        const notif = docSnap.data();
-        const d = new Date(notif.createdAt);
-        const dateStr = `${String(d.getDate()).padStart(2, "0")}-${String(
-          d.getMonth() + 1
-        ).padStart(2, "0")}-${d.getFullYear()}`;
-        const timeStr = d.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
+          csvContent += `"${dateStr}","${timeStr}","${shift}","${user}","${safeMsg}"\n`;
         });
-
-        const shift = notif.shift || "Not Recorded";
-        const user = notif.createdBy || "Unknown";
-        const safeMsg = notif.message.replace(/"/g, '""');
-
-        csvContent += `"${dateStr}","${timeStr}","${shift}","${user}","${safeMsg}"\n`;
-      });
+      }
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
